@@ -323,5 +323,26 @@ def generate(
         )
 
 
+@app.command("serve")
+def serve(
+    host: str = typer.Option("127.0.0.1", "--host", "-h", help="Host to bind"),
+    port: int = typer.Option(8000, "--port", "-p", help="Port to bind"),
+    reload: bool = typer.Option(False, "--reload", "-r", help="Enable auto-reload for development"),
+):
+    """
+    Start the Curriculum-Gen backend REST API.
+    """
+    import uvicorn
+    console.print(
+        Panel.fit(
+            f"[bold cyan]Curriculum-Gen API Server[/bold cyan]\n"
+            f"[green]Endpoint:[/green] http://{host}:{port}\n"
+            f"[dim]Docs available at:[/dim] http://{host}:{port}/docs",
+            border_style="cyan",
+        )
+    )
+    uvicorn.run("curriculum_gen.server.app:app", host=host, port=port, reload=reload)
+
+
 if __name__ == "__main__":
     app()

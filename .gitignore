@@ -16,5 +16,8 @@ output/
 profile.yaml
 examples/profile_joaosoares.yaml
 examples/profile_personal.yaml
-*personal*.yaml
-*.local.yaml
+# Frontend artifacts
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
