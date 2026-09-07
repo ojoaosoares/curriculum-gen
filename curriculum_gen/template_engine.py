@@ -106,7 +106,11 @@ def build_contact_elements(personal: ContactInfo) -> List[str]:
     when parsed by ATS or copied from the PDF.
     """
     elements = []
-    for item_key in personal.visible_items:
+    for item_raw in personal.visible_items:
+        if isinstance(item_raw, dict):
+            item_key = str(item_raw.get("key") or item_raw.get("id") or "").strip()
+        else:
+            item_key = str(item_raw).strip()
         key = item_key.lower().strip()
         if key == "location" and personal.location:
             loc = sanitize_latex(personal.location)

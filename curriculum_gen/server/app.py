@@ -2,7 +2,7 @@ import os
 import base64
 import yaml
 from pathlib import Path
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Union
 from fastapi import FastAPI, HTTPException, Body, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, JSONResponse
@@ -58,7 +58,7 @@ class GenerateRequest(BaseModel):
     profile: UserProfile
     job_description: str = ""
     language: str = "pt"  # "pt" or "en"
-    visible_contacts: Optional[List[str]] = None
+    visible_contacts: Optional[List[Union[str, Dict[str, Any]]]] = None
     api_key: Optional[str] = None
     base_url: Optional[str] = None
     model: Optional[str] = None
@@ -105,7 +105,10 @@ def generate_resume(req: GenerateRequest):
     profile = req.profile
 
     if req.visible_contacts:
-        profile.personal.visible_items = req.visible_contacts
+        profile.personal.visible_items = [
+            c.get("key", str(c)) if isinstance(c, dict) else str(c)
+            for c in req.visible_contacts
+        ]
 
     job_context = JobContext(
         job_description=req.job_description,

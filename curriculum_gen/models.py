@@ -1,4 +1,4 @@
-from typing import List, Optional, Dict, Union
+from typing import List, Optional, Dict, Union, Any
 from pydantic import BaseModel, Field
 
 
@@ -20,7 +20,7 @@ class ContactInfo(BaseModel):
     custom_links: List[ContactLink] = Field(default_factory=list)
     # Allows user to specify which contact items to display and in what order
     # Default order: location, email, phone, linkedin, github, lattes
-    visible_items: List[str] = Field(
+    visible_items: List[Union[str, Dict[str, Any]]] = Field(
         default_factory=lambda: [
             "location",
             "email",
@@ -34,8 +34,8 @@ class ContactInfo(BaseModel):
 
 class EducationItem(BaseModel):
     institution: str
-    degree: str
-    period: str
+    degree: Optional[str] = ""
+    period: Optional[str] = ""
     location: Optional[str] = None
     notes: Optional[str] = None
 
@@ -45,7 +45,7 @@ class ExperienceItem(BaseModel):
     role: str
     company: str
     company_url: Optional[str] = None
-    period: str
+    period: Optional[str] = ""
     location: Optional[str] = None
     start_year: Optional[int] = None
     end_year: Optional[int] = None
@@ -80,8 +80,8 @@ class AwardOrLeadershipItem(BaseModel):
     id: Optional[str] = None
     title: str
     organization: Optional[str] = None
-    period_or_date: str
-    description: str
+    period_or_date: Optional[str] = "N/A"
+    description: Optional[str] = ""
     url: Optional[str] = None
     url_label: Optional[str] = None
     paper_abstract: Optional[str] = None

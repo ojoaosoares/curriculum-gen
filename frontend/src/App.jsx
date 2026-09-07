@@ -23,7 +23,32 @@ import {
   Trash2,
   PieChart,
   ShieldCheck,
+  X,
 } from 'lucide-react';
+
+const extractErrorMessage = (errData, defaultMsg = 'Ocorreu um erro na operação.') => {
+  if (!errData) return defaultMsg;
+  const detail = errData.detail || errData.message || errData;
+  if (typeof detail === 'string') return detail;
+  if (Array.isArray(detail)) {
+    return detail
+      .map((item) => {
+        if (typeof item === 'string') return item;
+        if (item && item.msg) {
+          const loc = Array.isArray(item.loc)
+            ? item.loc.filter((x) => x !== 'body').join(' -> ')
+            : '';
+          return loc ? `${loc}: ${item.msg}` : item.msg;
+        }
+        return JSON.stringify(item);
+      })
+      .join('; ');
+  }
+  if (typeof detail === 'object') {
+    return detail.msg || detail.message || JSON.stringify(detail);
+  }
+  return String(detail);
+};
 
 const PRESET_JOBS = {
   systems: `Job Title: Systems & Network Software Engineer
@@ -250,7 +275,7 @@ export default function App() {
         } else {
           setVerifyResult({
             valid: false,
-            message: data.detail || `Erro HTTP ${res.status}: Não foi possível autenticar a chave.`,
+            message: extractErrorMessage(data, `Erro HTTP ${res.status}: Não foi possível autenticar a chave.`),
           });
         }
         return;
@@ -289,17 +314,21 @@ export default function App() {
     setStatusMessage('Processando correspondência e compilando currículo...');
 
     try {
+      const cleanVisibleContacts = (Array.isArray(visibleContacts) ? visibleContacts : [])
+        .map((c) => (typeof c === 'object' && c ? (c.key || c.id || String(c)) : String(c)))
+        .filter(Boolean);
+
       const payload = {
         profile: {
           ...profile,
           personal: {
             ...profile.personal,
-            visible_items: visibleContacts,
+            visible_items: cleanVisibleContacts,
           },
         },
         job_description: jobDescription,
         language: language,
-        visible_contacts: visibleContacts,
+        visible_contacts: cleanVisibleContacts,
         api_key: apiKey.trim() ? apiKey.trim().replace(/^["']|["']$/g, '') : null,
         provider: provider,
         model: model,
@@ -316,7 +345,7 @@ export default function App() {
 
       if (!res.ok) {
         const errData = await res.json().catch(() => ({ detail: res.statusText }));
-        throw new Error(errData.detail || 'Falha ao compilar currículo');
+        throw new Error(extractErrorMessage(errData, 'Falha ao compilar currículo'));
       }
 
       const data = await res.json();
@@ -342,7 +371,7 @@ export default function App() {
       }
       fetchTokenStats();
     } catch (err) {
-      setError(err.message);
+      setError(extractErrorMessage(err.message || err, 'Falha ao compilar currículo.'));
     } finally {
       setLoading(false);
     }
@@ -403,7 +432,7 @@ export default function App() {
         }
       } else {
         const err = await res.json().catch(() => ({}));
-        setPaperMessage(err.detail || 'Não foi possível extrair os dados da publicação.');
+        setPaperMessage(extractErrorMessage(err, 'Não foi possível extrair os dados da publicação.'));
       }
     } catch {
       setPaperMessage('Falha na conexão com o servidor de ingestão acadêmica.');
@@ -441,7 +470,7 @@ export default function App() {
         );
         fetchTokenStats();
       } else {
-        setPdfError(data.detail || 'Erro ao processar o arquivo PDF.');
+        setPdfError(extractErrorMessage(data, 'Erro ao processar o arquivo PDF.'));
       }
     } catch (err) {
       setPdfError('Falha na comunicação com o servidor ao enviar o PDF.');
@@ -1646,9 +1675,19 @@ export default function App() {
 
           {/* Bottom Feedback Bar */}
           {error && (
-            <div className="p-3.5 bg-[#fdf0f0] border-t border-[#e2a4a4] text-xs text-[#8c1c1c] flex items-center gap-2.5 shrink-0 font-sans">
-              <AlertCircle className="h-4 w-4 shrink-0 text-[#c73434]" />
-              <span>{error}</span>
+            <div className="p-3.5 bg-[#fdf0f0] border-t border-[#e2a4a4] text-xs text-[#8c1c1c] flex items-center justify-between gap-2.5 shrink-0 font-sans">
+              <div className="flex items-center gap-2.5 flex-1 min-w-0">
+                <AlertCircle className="h-4 w-4 shrink-0 text-[#c73434]" />
+                <span className="break-words leading-relaxed">{typeof error === 'string' ? error : extractErrorMessage(error)}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setError(null)}
+                className="text-[#8c1c1c] hover:text-[#501313] p-1 rounded hover:bg-[#fae2e2] transition shrink-0"
+                title="Fechar mensagem"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
             </div>
           )}
           {statusMessage && !error && (
