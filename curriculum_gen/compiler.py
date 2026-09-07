@@ -57,7 +57,8 @@ class PDFCompiler:
                     cmd,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
-                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
                     timeout=30,
                 )
                 log_output = proc.stdout

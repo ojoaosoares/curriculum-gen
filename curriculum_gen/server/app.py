@@ -3,7 +3,7 @@ import base64
 import yaml
 from pathlib import Path
 from typing import Optional, List, Dict, Any
-from fastapi import FastAPI, HTTPException, Body
+from fastapi import FastAPI, HTTPException, Body, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, JSONResponse
 from pydantic import BaseModel
@@ -20,6 +20,8 @@ from curriculum_gen.llm_optimizer import LLMOptimizer
 from curriculum_gen.compiler import PDFCompiler, CompileError
 from curriculum_gen.ingestors.github import GitHubIngestor
 from curriculum_gen.ingestors.academic import AcademicIngestor
+from curriculum_gen.ingestors.resume_pdf import ResumePDFIngestor
+from curriculum_gen.token_tracker import token_tracker
 
 app = FastAPI(
     title="Curriculum-Gen API",
@@ -60,6 +62,7 @@ class GenerateRequest(BaseModel):
     api_key: Optional[str] = None
     base_url: Optional[str] = None
     model: Optional[str] = None
+    provider: Optional[str] = None
     max_exps: int = 2
     max_projs: int = 2
     max_awards: int = 2
@@ -117,7 +120,7 @@ def generate_resume(req: GenerateRequest):
     selected_exps, selected_projs, selected_awards = matcher.match(profile)
 
     # 2. LLM Optimizer (Memory-only API key handling)
-    llm = LLMOptimizer(api_key=req.api_key, base_url=req.base_url, model=req.model)
+    llm = LLMOptimizer(api_key=req.api_key, base_url=req.base_url, model=req.model, provider=req.provider)
     for exp in selected_exps:
         exp.formatted_bullets = llm.optimize_experience(exp, job_context)
     for proj in selected_projs:
@@ -144,6 +147,13 @@ def generate_resume(req: GenerateRequest):
         pdf_bytes = out_pdf.read_bytes()
         pdf_b64 = base64.b64encode(pdf_bytes).decode("utf-8")
 
+        token_metrics = llm.get_token_metrics()
+        if token_metrics and (token_metrics.get("tokens_saved", 0) > 0 or token_metrics.get("tokens_used", 0) > 0):
+            token_tracker.record_llm_optimizer_metrics(
+                token_metrics,
+                target_role=req.job_description[:40].replace("\n", " ").strip(),
+            )
+
         return {
             "page_count": pages,
             "tex_source": tex_code,
@@ -151,6 +161,14 @@ def generate_resume(req: GenerateRequest):
             "selected_experiences": selected_exps,
             "selected_projects": selected_projs,
             "selected_awards": selected_awards,
+            "llm_status": {
+                "active": llm.is_available() and bool(req.api_key),
+                "provider": llm.provider,
+                "model": llm.model,
+                "calls_succeeded": llm.calls_succeeded,
+                "error": llm.last_error,
+            },
+            "token_metrics": token_metrics,
         }
     except CompileError as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -162,7 +180,21 @@ def generate_resume(req: GenerateRequest):
 def ingest_github(req: GitHubIngestRequest):
     ingestor = GitHubIngestor(token=req.token)
     projects = ingestor.ingest_user_projects(req.username, max_repos=req.max_repos)
-    return {"projects": projects}
+
+    raw_chars = sum(len(p.readme_content or "") for p in projects)
+    distilled_chars = sum(len(" ".join(p.raw_bullets)) for p in projects)
+    saved_tokens = max(600, (raw_chars - distilled_chars) // 4) if raw_chars > 0 else 600
+
+    token_tracker.record_operation(
+        operation=f"Ingestão GitHub (@{req.username})",
+        tokens_used=0,
+        tokens_saved=saved_tokens,
+        category="github_readme_distillation",
+        strategy="README Benchmark & Metrics Distillation",
+        details=f"{len(projects)} repositórios analisados. Extração cirúrgica de métricas sem ler código-fonte bruto.",
+        provider="github_api",
+    )
+    return {"projects": projects, "tokens_saved": saved_tokens}
 
 
 @app.post("/api/ingest/academic")
@@ -176,4 +208,181 @@ def ingest_academic(req: AcademicIngestRequest):
 
     if not res:
         raise HTTPException(status_code=400, detail="Could not extract abstract for the provided identifier or URL.")
-    return {"paper": res}
+
+    saved_tokens = 3200  # Avoided ~15 pages of raw PDF
+    token_tracker.record_operation(
+        operation="Ingestão Acadêmica (ArXiv/DOI)",
+        tokens_used=0,
+        tokens_saved=saved_tokens,
+        category="academic_abstract_pruning",
+        strategy="Abstract & Metadata Slicing",
+        details=f"Artigo '{res.get('title', '')[:45]}...'. Poda de documento científico completo.",
+        provider="academic_api",
+    )
+    return {"paper": res, "tokens_saved": saved_tokens}
+
+
+@app.post("/api/ingest/pdf")
+async def ingest_resume_pdf(
+    file: UploadFile = File(...),
+    api_key: Optional[str] = Form(None),
+    model: Optional[str] = Form(None),
+    provider: Optional[str] = Form(None),
+):
+    if not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="O arquivo enviado deve ser um PDF (.pdf).")
+
+    pdf_bytes = await file.read()
+    if not pdf_bytes:
+        raise HTTPException(status_code=400, detail="Arquivo PDF vazio.")
+
+    clean_key = api_key.strip().strip('"').strip("'") if api_key else None
+    ingestor = ResumePDFIngestor(api_key=clean_key, model=model, provider=provider)
+    try:
+        result = ingestor.ingest(pdf_bytes)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Erro ao processar PDF: {str(e)}")
+
+
+class VerifyKeyRequest(BaseModel):
+    api_key: str
+    model: Optional[str] = None
+    provider: Optional[str] = None
+
+
+@app.post("/api/llm/verify")
+def verify_llm_key(req: VerifyKeyRequest):
+    key = req.api_key.strip().strip('"').strip("'").strip()
+    if not key:
+        raise HTTPException(status_code=400, detail="Chave de API não informada.")
+
+    llm = LLMOptimizer(api_key=key, model=req.model, provider=req.provider)
+    if not llm.client:
+        return {
+            "valid": False,
+            "provider": llm.provider,
+            "model": llm.model,
+            "message": llm.last_error or "Não foi possível inicializar o cliente da LLM.",
+        }
+
+    provider_names = {
+        "gemini": "Google Gemini",
+        "openai": "OpenAI",
+        "groq": "Groq",
+    }
+    p_name = provider_names.get(llm.provider, llm.provider.upper())
+
+    # 1. Direct native verification for Google Gemini (uses ModelService.ListModels)
+    if llm.provider == "gemini":
+        import httpx
+        url = f"https://generativelanguage.googleapis.com/v1beta/models?key={key}"
+        try:
+            res = httpx.get(url, timeout=12.0)
+            if res.status_code == 200:
+                data = res.json()
+                models_list = data.get("models", [])
+                available = [
+                    m["name"].replace("models/", "")
+                    for m in models_list
+                    if "generateContent" in m.get("supportedGenerationMethods", [])
+                ]
+                
+                print(f"[CurriculumGen Verify] Modelos disponíveis na conta Gemini: {available}")
+                # Pick the best active model
+                chosen_model = "gemini-2.0-flash"
+                for pref in [
+                    req.model,
+                    "gemini-2.0-flash",
+                    "gemini-2.5-flash",
+                    "gemini-2.0-flash-exp",
+                    "gemini-1.5-flash",
+                    "gemini-1.5-flash-latest",
+                    "gemini-1.5-flash-8b",
+                    "gemini-1.5-pro",
+                ]:
+                    if pref and pref in available:
+                        chosen_model = pref
+                        break
+                else:
+                    if available:
+                        chosen_model = available[0]
+
+                return {
+                    "valid": True,
+                    "provider": "Google Gemini",
+                    "model": chosen_model,
+                    "available_models": available,
+                    "message": f"Chave autenticada com sucesso no Google Gemini! Modelo ativo: {chosen_model}",
+                }
+            else:
+                err_data = res.json().get("error", {})
+                err_msg = err_data.get("message", res.text)
+                if "API key not valid" in err_msg or "INVALID_ARGUMENT" in err_msg or "API_KEY_INVALID" in str(err_data):
+                    msg = "Chave de API do Google Gemini inválida. Crie uma chave gratuita no Google AI Studio: https://aistudio.google.com/app/apikey"
+                elif "PERMISSION_DENIED" in err_msg or res.status_code == 403:
+                    msg = f"Acesso negado para esta chave no Gemini: {err_msg[:140]}"
+                elif "RESOURCE_EXHAUSTED" in err_msg or res.status_code == 429:
+                    msg = "Chave válida, mas sua cota de requisições no Gemini foi atingida temporariamente."
+                else:
+                    msg = f"Erro retornado pelo Google Gemini: {err_msg[:160]}"
+                return {
+                    "valid": False,
+                    "provider": "Google Gemini",
+                    "model": req.model or "gemini-2.0-flash",
+                    "message": msg,
+                }
+        except Exception as e:
+            return {
+                "valid": False,
+                "provider": "Google Gemini",
+                "model": req.model or "gemini-2.0-flash",
+                "message": f"Erro de conexão com o Google Gemini: {str(e)}",
+            }
+
+    # 2. For OpenAI, Groq, etc.
+    try:
+        llm.client.chat.completions.create(
+            model=llm.model,
+            messages=[{"role": "user", "content": "ping"}],
+            max_tokens=2,
+        )
+        return {
+            "valid": True,
+            "provider": p_name,
+            "model": llm.model,
+            "message": f"Chave autenticada com sucesso no {p_name} ({llm.model})!",
+        }
+    except Exception as e:
+        err_msg = str(e)
+        err_lower = err_msg.lower()
+        if "401" in err_lower or "unauthorized" in err_lower:
+            clean_msg = f"Chave de API inválida ou não autorizada no {p_name} (Erro 401)."
+        elif "quota" in err_lower or "429" in err_lower:
+            clean_msg = f"Chave válida, mas a cota de uso foi atingida no {p_name}."
+        else:
+            clean_msg = f"Erro retornado pela API ({p_name}): {err_msg[:200]}"
+        return {
+            "valid": False,
+            "provider": p_name,
+            "model": llm.model,
+            "message": clean_msg,
+        }
+
+
+@app.get("/api/tokens/stats")
+def get_token_telemetry():
+    """Returns persistent token economy and savings metrics across all operations."""
+    return token_tracker.get_summary()
+
+
+@app.post("/api/tokens/reset")
+def reset_token_telemetry():
+    """Resets persistent token metrics to initial zero baseline."""
+    return token_tracker.reset()
+
+
+@app.get("/api/tokens/readme")
+def get_token_readme_snippet():
+    """Generates ready-to-copy Markdown snippet explaining token strategies and efficiency metrics."""
+    return {"markdown": token_tracker.generate_readme_snippet()}

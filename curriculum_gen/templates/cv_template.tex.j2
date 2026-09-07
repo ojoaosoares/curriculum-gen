@@ -16,6 +16,8 @@
 \definecolor{primaryColor}{RGB}{<< primary_color_rgb | default('0, 79, 144') >>}
 \usepackage{enumitem}
 \usepackage{fontawesome5}
+\usepackage{accsupp}
+\newcommand{\faATS}[1]{\BeginAccSupp{ActualText={}}#1\EndAccSupp{}}
 \usepackage{amsmath}
 \usepackage[
     pdftitle={<< personal.name >> - Resume},
@@ -150,15 +152,24 @@
     \begin{header}
         \textbf{\fontsize{24 pt}{24 pt}\selectfont << personal.name >>}
 
+        \vspace{0.15 cm}
         \normalsize
+        <% if contact_lines %>
+        <% for line in contact_lines %>
+        <% for item in line %>
+        << item >>%
+        <% if not loop.last %>\kern 0.2 cm\mbox{\color{gray}$|$}\kern 0.2 cm<% endif %>
+        <% endfor %>
+        <% if not loop.last %>\\ \vspace{0.08 cm}<% endif %>
+        <% endfor %>
+        <% else %>
         <% for item in contact_elements %>
             <% if not loop.first %>
-        \kern 0.15 cm%
-        \AND%
-        \kern 0.15 cm%
+        \kern 0.15 cm\mbox{\color{gray}$|$}\kern 0.15 cm%
             <% endif %>
         << item >>%
         <% endfor %>
+        <% endif %>
     \end{header}
 
 <% if education %>

@@ -17,7 +17,7 @@ fi
 
 # 1. Inicia o Backend FastAPI na porta 8000
 echo "Iniciando Backend FastAPI (http://127.0.0.1:8000)..."
-curriculum-gen serve --port 8000 &
+curriculum-gen serve --port 8000 --reload &
 BACKEND_PID=$!
 
 # 2. Inicia o Frontend React + Vite na porta 5173
