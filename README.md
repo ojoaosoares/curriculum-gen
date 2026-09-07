@@ -55,11 +55,39 @@ source .venv/bin/activate
 
 # Instalar dependências e CLI
 pip install -e .
+
+# Instalar dependências do Frontend (React + Vite)
+cd frontend && npm install && cd ..
 ```
 
 ---
 
-## 🛠️ Como Usar (CLI)
+## 🌐 Interface Web (Backend FastAPI + Frontend React & Vite)
+
+Você pode rodar tanto o **Backend FastAPI** quanto o **Frontend React** localmente com um único comando:
+
+```bash
+./run_local.sh
+```
+
+Ou iniciando em terminais separados:
+- **Terminal 1 (Backend API):**
+  ```bash
+  curriculum-gen serve --port 8000
+  ```
+- **Terminal 2 (Frontend React):**
+  ```bash
+  cd frontend
+  npm run dev
+  ```
+
+Acesse:
+- **Interface Visual:** [http://localhost:5173](http://localhost:5173)
+- **Documentação da API (Swagger):** [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
+
+---
+
+## 🛠️ Como Usar via Terminal (CLI)
 
 ### 1. Inicializar seu perfil (`profile.yaml`)
 Gere um template pronto para preencher com seus dados:
