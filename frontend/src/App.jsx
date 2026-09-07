@@ -84,18 +84,35 @@ export default function App() {
   const [error, setError] = useState(null);
   const [copiedLatex, setCopiedLatex] = useState(false);
 
-  // Profile data
-  const [profile, setProfile] = useState(null);
-  const [jobDescription, setJobDescription] = useState(PRESET_JOBS.systems);
-  const [language, setLanguage] = useState('en');
-  const [visibleContacts, setVisibleContacts] = useState([
-    'location',
-    'email',
-    'phone',
-    'linkedin',
-    'github',
-    'lattes',
-  ]);
+  // Profile data with local persistence fallback
+  const [profile, setProfile] = useState(() => {
+    try {
+      const cached = localStorage.getItem('curriculum_gen_active_profile');
+      return cached ? JSON.parse(cached) : null;
+    } catch {
+      return null;
+    }
+  });
+  const [jobDescription, setJobDescription] = useState(
+    () => localStorage.getItem('curriculum_gen_job_description') || PRESET_JOBS.systems
+  );
+  const [language, setLanguage] = useState(
+    () => localStorage.getItem('curriculum_gen_language') || 'en'
+  );
+  const [visibleContacts, setVisibleContacts] = useState(() => {
+    try {
+      const cached = localStorage.getItem('curriculum_gen_visible_contacts');
+      if (cached) return JSON.parse(cached);
+    } catch {}
+    return [
+      'location',
+      'email',
+      'phone',
+      'linkedin',
+      'github',
+      'lattes',
+    ];
+  });
 
   // LLM State (BYOK) with localStorage persistence
   const [provider, setProvider] = useState(() => localStorage.getItem('curriculum_gen_provider') || 'gemini');
@@ -149,6 +166,24 @@ export default function App() {
       localStorage.setItem('curriculum_gen_model', model);
     }
   }, [model]);
+
+  useEffect(() => {
+    if (jobDescription) {
+      localStorage.setItem('curriculum_gen_job_description', jobDescription);
+    }
+  }, [jobDescription]);
+
+  useEffect(() => {
+    if (language) {
+      localStorage.setItem('curriculum_gen_language', language);
+    }
+  }, [language]);
+
+  useEffect(() => {
+    if (visibleContacts && Array.isArray(visibleContacts)) {
+      localStorage.setItem('curriculum_gen_visible_contacts', JSON.stringify(visibleContacts));
+    }
+  }, [visibleContacts]);
 
   useEffect(() => {
     checkHealth();
@@ -210,12 +245,70 @@ export default function App() {
       if (res.ok) {
         const data = await res.json();
         setProfile(data);
+        try {
+          localStorage.setItem('curriculum_gen_active_profile', JSON.stringify(data));
+        } catch {}
         if (data.personal?.visible_items) {
-          setVisibleContacts(data.personal.visible_items);
+          const rawItems = Array.isArray(data.personal.visible_items) ? data.personal.visible_items : [];
+          const cleanItems = rawItems
+            .map((c) => (typeof c === 'object' && c ? (c.key || c.id || String(c)) : String(c)))
+            .filter(Boolean);
+          if (cleanItems.length > 0) {
+            setVisibleContacts(cleanItems);
+          }
         }
       }
     } catch (err) {
       console.error('Falha ao carregar perfil:', err);
+    }
+  };
+
+  const persistProfile = async (newProfile) => {
+    if (!newProfile) return;
+    try {
+      localStorage.setItem('curriculum_gen_active_profile', JSON.stringify(newProfile));
+    } catch (e) {
+      console.error('Falha ao salvar no localStorage:', e);
+    }
+
+    try {
+      const res = await fetch('/api/profile', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newProfile),
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(extractErrorMessage(errData, 'Erro ao salvar o perfil no servidor.'));
+      }
+      return await res.json();
+    } catch (err) {
+      console.error('Falha na persistência remota do perfil:', err);
+      throw err;
+    }
+  };
+
+  const handleResetProfile = async () => {
+    if (!window.confirm('Deseja restaurar o perfil padrão inicial? Quaisquer edições não salvas serão redefinidas.')) return;
+    try {
+      const res = await fetch('/api/profile/reset', { method: 'POST' });
+      if (res.ok) {
+        const data = await res.json();
+        const prof = data.profile;
+        setProfile(prof);
+        try {
+          localStorage.setItem('curriculum_gen_active_profile', JSON.stringify(prof));
+        } catch {}
+        if (prof.personal?.visible_items) {
+          const rawItems = Array.isArray(prof.personal.visible_items) ? prof.personal.visible_items : [];
+          const cleanItems = rawItems
+            .map((c) => (typeof c === 'object' && c ? (c.key || c.id || String(c)) : String(c)))
+            .filter(Boolean);
+          setVisibleContacts(cleanItems);
+        }
+      }
+    } catch (err) {
+      console.error('Falha ao resetar perfil:', err);
     }
   };
 
@@ -300,10 +393,24 @@ export default function App() {
   };
 
   const handleToggleContact = (item) => {
-    if (visibleContacts.includes(item)) {
-      setVisibleContacts(visibleContacts.filter((c) => c !== item));
+    const key = typeof item === 'object' && item ? (item.key || item.id || String(item)) : String(item);
+    let next;
+    if (visibleContacts.includes(key)) {
+      next = visibleContacts.filter((c) => c !== key);
     } else {
-      setVisibleContacts([...visibleContacts, item]);
+      next = [...visibleContacts, key];
+    }
+    setVisibleContacts(next);
+    if (profile) {
+      const updated = {
+        ...profile,
+        personal: {
+          ...profile.personal,
+          visible_items: next,
+        },
+      };
+      setProfile(updated);
+      persistProfile(updated).catch(() => {});
     }
   };
 
@@ -391,20 +498,23 @@ export default function App() {
         const data = await res.json();
         const newProjects = data.projects || [];
         if (profile) {
-          const existingTitles = new Set(profile.projects.map((p) => p.title.toLowerCase()));
-          const added = newProjects.filter((p) => !existingTitles.has(p.title.toLowerCase()));
-          setProfile({
+          const existingTitles = new Set((profile.projects || []).map((p) => (p.title || '').toLowerCase()));
+          const added = newProjects.filter((p) => !existingTitles.has((p.title || '').toLowerCase()));
+          const updatedProfile = {
             ...profile,
-            projects: [...profile.projects, ...added],
-          });
-          setGhMessage(`${added.length} novos projetos importados com sucesso a partir dos READMEs.`);
+            projects: [...(profile.projects || []), ...added],
+          };
+          setProfile(updatedProfile);
+          await persistProfile(updatedProfile);
+          setGhMessage(`${added.length} novos projetos importados e salvos com sucesso.`);
           fetchTokenStats();
         }
       } else {
-        setGhMessage('Erro ao consultar repositórios do GitHub.');
+        const err = await res.json().catch(() => ({}));
+        setGhMessage(extractErrorMessage(err, 'Erro ao consultar repositórios do GitHub.'));
       }
-    } catch {
-      setGhMessage('Falha ao conectar com o serviço de ingestão.');
+    } catch (err) {
+      setGhMessage(extractErrorMessage(err, 'Falha ao conectar com o serviço de ingestão.'));
     } finally {
       setGhLoading(false);
     }
@@ -423,19 +533,21 @@ export default function App() {
       if (res.ok) {
         const data = await res.json();
         if (data.paper && profile) {
-          setProfile({
+          const updatedProfile = {
             ...profile,
-            projects: [...profile.projects, data.paper],
-          });
-          setPaperMessage(`Artigo "${data.paper.title}" importado com sucesso.`);
+            projects: [...(profile.projects || []), data.paper],
+          };
+          setProfile(updatedProfile);
+          await persistProfile(updatedProfile);
+          setPaperMessage(`Artigo "${data.paper.title}" importado e salvo com sucesso.`);
           fetchTokenStats();
         }
       } else {
         const err = await res.json().catch(() => ({}));
         setPaperMessage(extractErrorMessage(err, 'Não foi possível extrair os dados da publicação.'));
       }
-    } catch {
-      setPaperMessage('Falha na conexão com o servidor de ingestão acadêmica.');
+    } catch (err) {
+      setPaperMessage(extractErrorMessage(err, 'Falha na conexão com o servidor de ingestão acadêmica.'));
     } finally {
       setPaperLoading(false);
     }
@@ -545,20 +657,16 @@ export default function App() {
 
     setProfile(updatedProfile);
     try {
-      await fetch('/api/profile', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(updatedProfile),
-      });
+      await persistProfile(updatedProfile);
       setPdfMessage(
         mode === 'merge'
-          ? 'Dados mesclados ao perfil ativo com sucesso!'
-          : 'Perfil substituído com os dados do currículo/LinkedIn!'
+          ? 'Dados mesclados ao perfil ativo e salvos com sucesso!'
+          : 'Perfil substituído e salvo com os dados do currículo/LinkedIn!'
       );
       setPdfResult(null);
       setPdfFile(null);
-    } catch {
-      setPdfError('Erro ao salvar o perfil atualizado no backend.');
+    } catch (err) {
+      setPdfError(extractErrorMessage(err, 'Erro ao salvar o perfil atualizado no backend.'));
     }
   };
 
@@ -827,9 +935,18 @@ export default function App() {
                     <h3 className="text-sm font-sans font-bold uppercase tracking-wider text-[#3d3327]">
                       Dados Pessoais
                     </h3>
-                    <span className="text-xs text-[#7d7162] font-mono">
-                      profile.yaml
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] text-[#7d7162] font-mono bg-[#ece4d2] px-2 py-0.5 rounded">
+                        Ativo: data/active_profile.yaml
+                      </span>
+                      <button
+                        onClick={handleResetProfile}
+                        className="text-[11px] font-sans font-medium text-[#8b5a2b] hover:text-[#5e3814] hover:underline"
+                        title="Restaurar perfil inicial padrão de exemplo"
+                      >
+                        Restaurar Padrão
+                      </button>
+                    </div>
                   </div>
                   <div className="grid grid-cols-2 gap-3 text-sm font-serif">
                     <div>
@@ -901,6 +1018,51 @@ export default function App() {
                     ))}
                   </div>
                 </div>
+
+                {/* Projects Summary */}
+                {profile.projects && profile.projects.length > 0 && (
+                  <div className="space-y-2">
+                    <h4 className="text-xs font-sans font-bold text-[#5e5142] uppercase tracking-wider">
+                      Projetos Registrados ({profile.projects.length})
+                    </h4>
+                    <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                      {profile.projects.map((proj, idx) => (
+                        <div key={idx} className="p-3 rounded border border-[#dfd5be] bg-[#fffdfa] text-xs">
+                          <div className="flex justify-between font-bold text-sm text-[#221c16]">
+                            <span>{proj.title}</span>
+                            <span className="text-[#756758] font-normal text-xs">{proj.period || proj.start_year || ''}</span>
+                          </div>
+                          {proj.subtitle && <div className="text-[#635749] text-xs mt-0.5">{proj.subtitle}</div>}
+                          <div className="text-[11px] text-[#8c7f70] mt-1.5 flex flex-wrap gap-1">
+                            {proj.tags?.slice(0, 5).map((t, i) => (
+                              <span key={i} className="bg-[#f0e9dc] px-2 py-0.5 rounded">{t}</span>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Awards Summary */}
+                {profile.awards_and_leadership && profile.awards_and_leadership.length > 0 && (
+                  <div className="space-y-2">
+                    <h4 className="text-xs font-sans font-bold text-[#5e5142] uppercase tracking-wider">
+                      Conquistas & Reconhecimentos ({profile.awards_and_leadership.length})
+                    </h4>
+                    <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                      {profile.awards_and_leadership.map((aw, idx) => (
+                        <div key={idx} className="p-2.5 rounded border border-[#dfd5be] bg-[#fffdfa] text-xs">
+                          <div className="flex justify-between font-bold text-xs text-[#221c16]">
+                            <span>{aw.title}</span>
+                            <span className="text-[#756758] font-normal text-[11px]">{aw.period_or_date}</span>
+                          </div>
+                          {aw.description && <div className="text-[#635749] text-[11px] mt-0.5">{aw.description}</div>}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 

@@ -52,3 +52,18 @@ def test_matcher_selects_relevant():
     matcher2 = MatcherEngine(job_frontend)
     selected_exps2, _, _ = matcher2.match(profile)
     assert selected_exps2[0].role == "Frontend Engineer"
+
+
+def test_calculate_recency_handles_none():
+    assert calculate_recency(None) == 0.75
+    assert calculate_recency("") == 0.75
+    assert calculate_recency(None, start_year=2026) >= 0.95
+
+
+def test_matcher_scores_with_none_fields():
+    from curriculum_gen.models import AwardOrLeadershipItem
+    award = AwardOrLeadershipItem(title="Hackathon Winner", period_or_date=None, description=None)
+    job = JobContext(job_description="Hackathon winner needed")
+    matcher = MatcherEngine(job)
+    score = matcher.score_award(award)
+    assert score > 0.0

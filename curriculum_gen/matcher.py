@@ -45,16 +45,26 @@ def calculate_relevance(item_tokens: Set[str], job_tokens: Set[str]) -> float:
     return min(1.0, score * 2.5)  # Scale reasonably
 
 
-def calculate_recency(period_str: str, start_year: int = None, is_current: bool = False) -> float:
+def calculate_recency(period_str: Optional[str] = None, start_year: Optional[int] = None, is_current: bool = False) -> float:
     """
     Calculate recency score between 0.0 and 1.0.
     Items that are 'Present', 'Current', or from this year get near 1.0.
-    Older items decay smoothly.
+    Older items decay smoothly. Safely handles None or empty strings.
     """
-    if is_current or "present" in period_str.lower() or "atual" in period_str.lower():
+    if is_current:
         return 1.0
 
-    years_found = [int(y) for y in re.findall(r"\b(20\d\d)\b", period_str)]
+    if not period_str:
+        if start_year:
+            diff = CURRENT_YEAR - start_year
+            return max(0.35, 1.0 - (0.15 * diff)) if diff > 0 else 1.0
+        return 0.75
+
+    p_lower = str(period_str).lower()
+    if "present" in p_lower or "atual" in p_lower or "previsão" in p_lower or "expected" in p_lower:
+        return 1.0
+
+    years_found = [int(y) for y in re.findall(r"\b(20\d\d)\b", str(period_str))]
     item_year = max(years_found) if years_found else (start_year or (CURRENT_YEAR - 2))
 
     diff = CURRENT_YEAR - item_year
@@ -94,11 +104,15 @@ class MatcherEngine:
         self.job_tokens = extract_keywords(job_context)
 
     def score_experience(self, exp: ExperienceItem) -> float:
-        content = f"{exp.role} {exp.company} {' '.join(exp.tags)} {' '.join(exp.raw_bullets)}"
+        role = exp.role or ""
+        company = exp.company or ""
+        tags = exp.tags or []
+        bullets = exp.raw_bullets or []
+        content = f"{role} {company} {' '.join(tags)} {' '.join(bullets)}"
         tokens = tokenize(content)
         s_rel = calculate_relevance(tokens, self.job_tokens)
         s_rec = calculate_recency(exp.period, exp.start_year, exp.is_current)
-        s_imp = calculate_impact(exp.raw_bullets, exp.metrics)
+        s_imp = calculate_impact(bullets, exp.metrics or [])
 
         total = (
             self.job_context.weight_relevance * s_rel
@@ -109,11 +123,16 @@ class MatcherEngine:
         return exp.score
 
     def score_project(self, proj: ProjectItem) -> float:
-        content = f"{proj.title} {proj.subtitle or ''} {' '.join(proj.tags)} {' '.join(proj.raw_bullets)} {proj.readme_content or ''}"
+        title = proj.title or ""
+        subtitle = proj.subtitle or ""
+        tags = proj.tags or []
+        bullets = proj.raw_bullets or []
+        readme = proj.readme_content or ""
+        content = f"{title} {subtitle} {' '.join(tags)} {' '.join(bullets)} {readme}"
         tokens = tokenize(content)
         s_rel = calculate_relevance(tokens, self.job_tokens)
-        s_rec = calculate_recency(proj.period or "", proj.start_year)
-        s_imp = calculate_impact(proj.raw_bullets, proj.metrics)
+        s_rec = calculate_recency(proj.period, proj.start_year)
+        s_imp = calculate_impact(bullets, proj.metrics or [])
 
         total = (
             self.job_context.weight_relevance * s_rel
@@ -124,11 +143,17 @@ class MatcherEngine:
         return proj.score
 
     def score_award(self, award: AwardOrLeadershipItem) -> float:
-        content = f"{award.title} {award.organization or ''} {award.description} {award.paper_abstract or ''} {' '.join(award.tags)}"
+        title = award.title or ""
+        org = award.organization or ""
+        desc = award.description or ""
+        abstract = award.paper_abstract or ""
+        tags = award.tags or []
+        content = f"{title} {org} {desc} {abstract} {' '.join(tags)}"
         tokens = tokenize(content)
         s_rel = calculate_relevance(tokens, self.job_tokens)
         s_rec = calculate_recency(award.period_or_date)
-        s_imp = 0.8 if award.paper_abstract or "award" in award.title.lower() or "prêmio" in award.title.lower() else 0.5
+        t_lower = title.lower()
+        s_imp = 0.8 if abstract or "award" in t_lower or "prêmio" in t_lower else 0.5
 
         total = (
             self.job_context.weight_relevance * s_rel

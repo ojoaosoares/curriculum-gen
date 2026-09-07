@@ -135,3 +135,51 @@ def test_validate_experience_fidelity_catches_hallucination():
     assert llm._validate_experience_fidelity(legit, exp_web) is True
 
 
+def test_profile_persistence_and_reset(tmp_path, monkeypatch):
+    import sys
+    from fastapi.testclient import TestClient
+    import curriculum_gen.server.app
+    server_module = sys.modules["curriculum_gen.server.app"]
+
+    fake_data_dir = tmp_path / "data"
+    fake_data_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(server_module, "PROJECT_ROOT", tmp_path)
+
+    client = TestClient(server_module.app)
+
+    # Prepare sample profile in examples
+    examples_dir = tmp_path / "examples"
+    examples_dir.mkdir(parents=True, exist_ok=True)
+    (examples_dir / "profile_sample.yaml").write_text("""
+personal:
+  name: "Original Sample"
+  email: "sample@example.com"
+education: []
+experiences: []
+awards_and_leadership: []
+projects: []
+skills: {}
+""", encoding="utf-8")
+
+    # 1. Initial GET loads fallback
+    res = client.get("/api/profile")
+    assert res.status_code == 200
+    assert res.json()["personal"]["name"] == "Original Sample"
+
+    # 2. POST /api/profile saves to data/active_profile.yaml
+    updated = res.json()
+    updated["personal"]["name"] = "Saved User"
+    save_res = client.post("/api/profile", json=updated)
+    assert save_res.status_code == 200
+
+    # 3. GET /api/profile returns saved user
+    get_res = client.get("/api/profile")
+    assert get_res.status_code == 200
+    assert get_res.json()["personal"]["name"] == "Saved User"
+
+    # 4. POST /api/profile/reset restores original sample
+    reset_res = client.post("/api/profile/reset")
+    assert reset_res.status_code == 200
+    assert reset_res.json()["profile"]["personal"]["name"] == "Original Sample"
+
+

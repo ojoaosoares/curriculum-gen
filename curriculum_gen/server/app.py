@@ -41,11 +41,19 @@ app.add_middleware(
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
 
-def get_active_profile_path() -> Path:
-    # Check local user profile first, then sample
+def get_active_profile_path(for_write: bool = False) -> Path:
+    # Check dedicated user active profile first
+    user_active = PROJECT_ROOT / "data" / "active_profile.yaml"
+    if for_write:
+        user_active.parent.mkdir(parents=True, exist_ok=True)
+        return user_active
+    if user_active.exists():
+        return user_active
+
+    # Fallback to local profile or sample
     candidates = [
-        PROJECT_ROOT / "examples" / "profile_joaosoares.yaml",
         PROJECT_ROOT / "profile.yaml",
+        PROJECT_ROOT / "examples" / "profile_joaosoares.yaml",
         PROJECT_ROOT / "examples" / "profile_sample.yaml",
     ]
     for c in candidates:
@@ -94,10 +102,22 @@ def get_profile():
 
 @app.post("/api/profile")
 def save_profile(profile: UserProfile):
-    path = get_active_profile_path()
+    path = get_active_profile_path(for_write=True)
     with open(path, "w", encoding="utf-8") as f:
         yaml.dump(profile.model_dump(), f, sort_keys=False, allow_unicode=True)
     return {"status": "saved", "path": str(path.name)}
+
+
+@app.post("/api/profile/reset")
+def reset_profile():
+    user_active = PROJECT_ROOT / "data" / "active_profile.yaml"
+    if user_active.exists():
+        user_active.unlink()
+    path = get_active_profile_path()
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="No profile found")
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    return {"status": "reset", "profile": data}
 
 
 @app.post("/api/generate")
