@@ -67,3 +67,16 @@ def test_matcher_scores_with_none_fields():
     matcher = MatcherEngine(job)
     score = matcher.score_award(award)
     assert score > 0.0
+
+
+def test_matcher_analyze_ats():
+    job = JobContext(job_description="Senior Python Docker Kubernetes developer")
+    matcher = MatcherEngine(job)
+    exp = ExperienceItem(role="Software Engineer", company="Acme", tags=["Python", "Docker"])
+    profile = UserProfile(personal=ContactInfo(name="Dev"), experiences=[exp], skills={"Tech": ["Git"]})
+    res = matcher.analyze_ats(profile, [exp], [], [])
+    assert res["score_pct"] > 0
+    assert "python" in res["matched_keywords"]
+    assert "docker" in res["matched_keywords"]
+    assert "kubernetes" in res["missing_keywords"]
+    assert len(res["recommendations"]) > 0

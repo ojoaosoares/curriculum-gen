@@ -2184,13 +2184,22 @@ export default function App() {
               </button>
               <button
                 onClick={() => setRightTab('scores')}
-                className={`px-3.5 py-1.5 rounded transition font-medium ${
+                className={`px-3.5 py-1.5 rounded transition font-medium flex items-center gap-2 ${
                   rightTab === 'scores'
                     ? 'bg-[#ede6d4] text-[#2c2620] border border-[#d0c4ac] font-semibold'
                     : 'text-[#706456] hover:text-[#2c2620]'
                 }`}
               >
-                Pontuação ATS (Ranking)
+                <span>Diagnóstico ATS & Ranking</span>
+                {result?.ats_diagnostics && (
+                  <span className={`text-[10px] px-2 py-0.5 rounded-full font-mono font-bold ${
+                    result.ats_diagnostics.score_pct >= 70
+                      ? 'bg-[#206634]/15 text-[#206634] border border-[#206634]/30'
+                      : 'bg-[#8b5a2b]/15 text-[#8b5a2b] border border-[#8b5a2b]/30'
+                  }`}>
+                    {result.ats_diagnostics.score_pct}% Match
+                  </span>
+                )}
               </button>
               <button
                 onClick={() => setRightTab('latex')}
@@ -2300,6 +2309,126 @@ export default function App() {
 
                 {result ? (
                   <div className="space-y-6">
+                    {/* ATS Diagnostics Card */}
+                    {result.ats_diagnostics && (
+                      <div className="paper-card rounded-md p-4 space-y-4 border-l-4 border-l-[#8b5a2b]">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <div>
+                            <span className="text-xs font-sans font-bold uppercase tracking-wider text-[#8b5a2b] block">
+                              Diagnóstico de Aderência ATS
+                            </span>
+                            <div className="flex items-baseline gap-2 mt-0.5">
+                              <span className="text-3xl font-serif font-bold text-[#221c16]">
+                                {result.ats_diagnostics.score_pct}%
+                              </span>
+                              <span className={`text-xs font-sans font-medium px-2 py-0.5 rounded-full ${
+                                result.ats_diagnostics.score_pct >= 75
+                                  ? 'bg-[#eef8f0] text-[#1e582e] border border-[#a2d8b0]'
+                                  : result.ats_diagnostics.score_pct >= 50
+                                  ? 'bg-[#fef9ee] text-[#8b5a2b] border border-[#d6c9b1]'
+                                  : 'bg-[#fdf0f0] text-[#8c1c1c] border border-[#e2a4a4]'
+                              }`}>
+                                {result.ats_diagnostics.score_pct >= 75
+                                  ? 'Alta Compatibilidade'
+                                  : result.ats_diagnostics.score_pct >= 50
+                                  ? 'Compatibilidade Moderada'
+                                  : 'Baixa Aderência'}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-4 text-xs font-sans text-[#706456]">
+                            <div className="text-center">
+                              <span className="block text-base font-bold text-[#1e582e]">
+                                {result.ats_diagnostics.matched_keywords?.length || 0}
+                              </span>
+                              <span className="text-[10px]">Identificadas</span>
+                            </div>
+                            <div className="text-center">
+                              <span className="block text-base font-bold text-[#8c1c1c]">
+                                {result.ats_diagnostics.missing_keywords?.length || 0}
+                              </span>
+                              <span className="text-[10px]">Ausentes</span>
+                            </div>
+                            <div className="text-center">
+                              <span className="block text-base font-bold text-[#221c16]">
+                                {result.ats_diagnostics.total_job_keywords || 0}
+                              </span>
+                              <span className="text-[10px]">Total na Vaga</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Progress Bar */}
+                        <div className="w-full bg-[#e8ded0] h-2 rounded-full overflow-hidden">
+                          <div
+                            className={`h-full transition-all duration-500 rounded-full ${
+                              result.ats_diagnostics.score_pct >= 75
+                                ? 'bg-[#206634]'
+                                : result.ats_diagnostics.score_pct >= 50
+                                ? 'bg-[#8b5a2b]'
+                                : 'bg-[#a33]'
+                            }`}
+                            style={{ width: `${Math.min(100, result.ats_diagnostics.score_pct)}%` }}
+                          />
+                        </div>
+
+                        {/* Matched Keywords */}
+                        {result.ats_diagnostics.matched_keywords && result.ats_diagnostics.matched_keywords.length > 0 && (
+                          <div className="space-y-1.5">
+                            <span className="text-[11px] font-sans font-bold text-[#1e582e] flex items-center gap-1.5 uppercase">
+                              <CheckCircle2 className="h-3.5 w-3.5" />
+                              Palavras-Chave Encontradas no Currículo ({result.ats_diagnostics.matched_keywords.length})
+                            </span>
+                            <div className="flex flex-wrap gap-1.5">
+                              {result.ats_diagnostics.matched_keywords.map((kw, i) => (
+                                <span
+                                  key={i}
+                                  className="text-xs font-mono bg-[#eef8f0] text-[#1e582e] border border-[#a2d8b0] px-2 py-0.5 rounded"
+                                >
+                                  ✓ {kw}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Missing Keywords */}
+                        {result.ats_diagnostics.missing_keywords && result.ats_diagnostics.missing_keywords.length > 0 && (
+                          <div className="space-y-1.5">
+                            <span className="text-[11px] font-sans font-bold text-[#8b5a2b] flex items-center gap-1.5 uppercase">
+                              <AlertCircle className="h-3.5 w-3.5 text-[#8b5a2b]" />
+                              Palavras-Chave da Vaga Ausentes no Documento ({result.ats_diagnostics.missing_keywords.length})
+                            </span>
+                            <div className="flex flex-wrap gap-1.5">
+                              {result.ats_diagnostics.missing_keywords.slice(0, 20).map((kw, i) => (
+                                <span
+                                  key={i}
+                                  className="text-xs font-mono bg-[#fdf8ed] text-[#785324] border border-[#e5d5be] px-2 py-0.5 rounded"
+                                >
+                                  + {kw}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Recommendations */}
+                        {result.ats_diagnostics.recommendations && result.ats_diagnostics.recommendations.length > 0 && (
+                          <div className="p-3 bg-[#fdfcf9] rounded border border-[#dfd5be] space-y-1 text-xs">
+                            <span className="font-bold text-[#3d3327] block text-[11px] uppercase tracking-wider">
+                              Recomendações Acionáveis
+                            </span>
+                            <ul className="list-disc list-inside space-y-1 text-[#615446] font-serif">
+                              {result.ats_diagnostics.recommendations.map((rec, i) => (
+                                <li key={i}>{rec}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
                     {/* Experiences Selection */}
                     <div>
                       <h4 className="text-xs font-sans font-bold uppercase tracking-wider text-[#8b5a2b] mb-3 flex items-center gap-2">

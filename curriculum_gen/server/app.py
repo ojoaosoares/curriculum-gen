@@ -177,6 +177,13 @@ def generate_resume(req: GenerateRequest):
                 target_role=req.job_description[:40].replace("\n", " ").strip(),
             )
 
+        ats_diagnostics = matcher.analyze_ats(
+            profile=profile,
+            selected_exps=selected_exps,
+            selected_projs=selected_projs,
+            selected_awards=selected_awards,
+        )
+
         return {
             "page_count": pages,
             "tex_source": tex_code,
@@ -184,6 +191,7 @@ def generate_resume(req: GenerateRequest):
             "selected_experiences": selected_exps,
             "selected_projects": selected_projs,
             "selected_awards": selected_awards,
+            "ats_diagnostics": ats_diagnostics,
             "llm_status": {
                 "active": llm.is_available() and bool(req.api_key),
                 "provider": llm.provider,

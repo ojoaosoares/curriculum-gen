@@ -247,3 +247,104 @@ class MatcherEngine:
         selected_awards = self.select_diverse_items(award_candidates, self.job_context.max_awards)
 
         return selected_exps, selected_projs, selected_awards
+
+    def analyze_ats(
+        self,
+        profile: UserProfile,
+        selected_exps: List[ExperienceItem],
+        selected_projs: List[ProjectItem],
+        selected_awards: List[AwardOrLeadershipItem],
+    ) -> Dict[str, Any]:
+        """
+        Performs an ATS keyword match diagnosis between the job description
+        and the content selected for the 1-page resume.
+        Returns matched keywords, missing keywords, overall match percentage,
+        and actionable recommendations.
+        """
+        STOP_WORDS = {
+            "and", "the", "with", "for", "from", "that", "this", "have", "been", "will", "our", "you", "your",
+            "are", "about", "into", "through", "more", "must", "plus", "such", "than", "then", "them", "these",
+            "para", "com", "uma", "dos", "das", "que", "como", "pela", "pelo", "mais", "entre", "sobre", "qual",
+            "seus", "suas", "esse", "essa", "esta", "este", "anos", "year", "years", "experiência", "experience",
+            "trabalho", "work", "time", "equipe", "role", "vaga", "job", "responsibilities", "requirements",
+            "requisitos", "responsabilidades", "conhecimento", "knowledge", "desejável", "diferencial", "atuar",
+            "desenvolver", "desenvolvimento", "projetos", "sistemas", "suporte", "habilidades", "skills", "ability",
+            "acting", "area", "área", "good", "well", "great", "strong", "pleno", "senior", "sênior", "junior", "júnior"
+        }
+
+        # 1. Clean job tokens
+        meaningful_job_tokens = [
+            t for t in self.job_tokens
+            if len(t) > 2 and t not in STOP_WORDS and not t.isdigit()
+        ]
+
+        # 2. Extract resume tokens from selected items and profile skills
+        resume_text_parts: List[str] = []
+
+        for exp in selected_exps:
+            resume_text_parts.append(exp.role or "")
+            resume_text_parts.append(exp.company or "")
+            resume_text_parts.extend(exp.tags or [])
+            resume_text_parts.extend(exp.formatted_bullets or exp.raw_bullets or [])
+
+        for proj in selected_projs:
+            resume_text_parts.append(proj.title or "")
+            resume_text_parts.append(proj.subtitle or "")
+            resume_text_parts.extend(proj.tags or [])
+            resume_text_parts.extend(proj.formatted_bullets or proj.raw_bullets or [])
+
+        for aw in selected_awards:
+            resume_text_parts.append(aw.title or "")
+            resume_text_parts.append(aw.description or "")
+            resume_text_parts.extend(aw.tags or [])
+
+        for cat, items in (profile.skills or {}).items():
+            resume_text_parts.append(cat)
+            if isinstance(items, list):
+                resume_text_parts.extend(items)
+            elif isinstance(items, str):
+                resume_text_parts.append(items)
+
+        resume_full_text = " ".join(resume_text_parts)
+        resume_tokens = tokenize(resume_full_text)
+
+        matched = [t for t in meaningful_job_tokens if t in resume_tokens]
+        missing = [t for t in meaningful_job_tokens if t not in resume_tokens]
+
+        matched_sorted = sorted(list(dict.fromkeys(matched)))
+        missing_sorted = sorted(list(dict.fromkeys(missing)))
+
+        total_unique_job_tokens = len(matched_sorted) + len(missing_sorted)
+        match_pct = (
+            round((len(matched_sorted) / max(1, total_unique_job_tokens)) * 100, 1)
+            if total_unique_job_tokens > 0
+            else 100.0
+        )
+
+        recommendations: List[str] = []
+        if match_pct >= 75:
+            recommendations.append(
+                "Excelente aderência aos requisitos da vaga! Seu currículo possui forte correspondência com as palavras-chave primárias."
+            )
+        elif match_pct >= 50:
+            recommendations.append(
+                "Boa compatibilidade geral. Para maximizar sua pontuação nos filtros ATS, avalie incluir alguns dos termos ausentes em suas experiências ou competências."
+            )
+        else:
+            recommendations.append(
+                "Aderência moderada. Termos importantes da vaga não foram encontrados nas seções selecionadas do currículo."
+            )
+
+        if missing_sorted:
+            top_missing_preview = ", ".join(missing_sorted[:5])
+            recommendations.append(
+                f"Considere adicionar termos como: {top_missing_preview} se você possuir experiência prática neles."
+            )
+
+        return {
+            "score_pct": match_pct,
+            "matched_keywords": matched_sorted,
+            "missing_keywords": missing_sorted,
+            "total_job_keywords": total_unique_job_tokens,
+            "recommendations": recommendations,
+        }
