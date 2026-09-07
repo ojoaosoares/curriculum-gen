@@ -26,6 +26,7 @@ import {
   X,
   Pencil,
   Plus,
+  Award,
 } from 'lucide-react';
 
 const extractErrorMessage = (errData, defaultMsg = 'Ocorreu um erro na operação.') => {
@@ -2491,6 +2492,111 @@ export default function App() {
                             </ul>
                           </div>
                         ))}
+                      </div>
+                    </div>
+
+                    {/* Awards Selection */}
+                    <div>
+                      <h4 className="text-xs font-sans font-bold uppercase tracking-wider text-[#8b5a2b] mb-3 flex items-center gap-2">
+                        <Award className="h-4 w-4" />
+                        Conquistas & Reconhecimentos Selecionados ({result.selected_awards?.length || 0})
+                      </h4>
+                      {result.selected_awards && result.selected_awards.length > 0 ? (
+                        <div className="space-y-3">
+                          {result.selected_awards.map((aw, idx) => (
+                            <div key={idx} className="paper-card rounded-md p-4 space-y-2">
+                              <div className="flex items-center justify-between">
+                                <span className="font-bold text-base text-[#1f1913] font-serif">
+                                  {aw.title}
+                                </span>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs font-sans text-[#756758]">{aw.period_or_date}</span>
+                                  <span className="text-xs font-mono font-bold text-[#2c2620] bg-[#f0e8d7] px-2.5 py-0.5 rounded border border-[#d6c9b1]">
+                                    Score: {aw.score?.toFixed(3)}
+                                  </span>
+                                </div>
+                              </div>
+                              {aw.description && (
+                                <p className="text-sm text-[#42392f] font-serif leading-relaxed">
+                                  {aw.description}
+                                </p>
+                              )}
+                              {aw.tags && aw.tags.length > 0 && (
+                                <div className="flex flex-wrap gap-1.5 pt-1">
+                                  {aw.tags.map((t, i) => (
+                                    <span key={i} className="text-xs font-sans bg-[#ede5d2] text-[#4d4235] px-2 py-0.5 rounded">
+                                      {t}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="p-3.5 bg-[#fdfcf9] rounded border border-[#dfd5be] text-xs text-[#756758] italic font-serif">
+                          Nenhuma conquista ou premiação selecionada para o orçamento de 1 página desta vaga.
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Categorized Skills Breakdown */}
+                    <div>
+                      <h4 className="text-xs font-sans font-bold uppercase tracking-wider text-[#8b5a2b] mb-3 flex items-center gap-2">
+                        <GraduationCap className="h-4 w-4" />
+                        Competências & Habilidades no Currículo (Por Categoria)
+                      </h4>
+                      <div className="space-y-3">
+                        {Object.entries(result.skills || profile?.skills || {}).map(([category, items], idx) => {
+                          const skillList = Array.isArray(items) ? items : [items];
+                          const matchedSet = new Set(
+                            (result.ats_diagnostics?.matched_keywords || []).map((k) => k.toLowerCase())
+                          );
+                          const matchedCount = skillList.filter((s) =>
+                            matchedSet.has(s.toLowerCase()) ||
+                            s.toLowerCase().split(/\s+/).some((part) => matchedSet.has(part))
+                          ).length;
+
+                          return (
+                            <div key={idx} className="paper-card rounded-md p-4 space-y-2">
+                              <div className="flex items-center justify-between border-b border-[#ded5bf] pb-1.5">
+                                <span className="font-bold text-xs uppercase tracking-wider text-[#3d3327]">
+                                  {category}
+                                </span>
+                                <span className="text-[11px] font-sans text-[#706456]">
+                                  {matchedCount > 0 ? (
+                                    <span className="text-[#1e582e] font-semibold">
+                                      ✓ {matchedCount} {matchedCount === 1 ? 'termo aderente' : 'termos aderentes'} à vaga
+                                    </span>
+                                  ) : (
+                                    <span>{skillList.length} itens</span>
+                                  )}
+                                </span>
+                              </div>
+                              <div className="flex flex-wrap gap-1.5 pt-1">
+                                {skillList.map((sk, i) => {
+                                  const isMatched =
+                                    matchedSet.has(sk.toLowerCase()) ||
+                                    sk.toLowerCase().split(/\s+/).some((part) => matchedSet.has(part));
+
+                                  return (
+                                    <span
+                                      key={i}
+                                      className={`text-xs font-sans px-2.5 py-1 rounded flex items-center gap-1 transition ${
+                                        isMatched
+                                          ? 'bg-[#eef8f0] text-[#1e582e] border border-[#9fd8ad] font-semibold shadow-2xs'
+                                          : 'bg-[#ede5d2] text-[#4d4235] border border-transparent'
+                                      }`}
+                                    >
+                                      {isMatched && <Check className="h-3 w-3 text-[#1e582e]" />}
+                                      <span>{sk}</span>
+                                    </span>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
                     </div>
                   </div>

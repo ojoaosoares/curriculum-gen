@@ -191,6 +191,7 @@ def generate_resume(req: GenerateRequest):
             "selected_experiences": selected_exps,
             "selected_projects": selected_projs,
             "selected_awards": selected_awards,
+            "skills": profile.skills,
             "ats_diagnostics": ats_diagnostics,
             "llm_status": {
                 "active": llm.is_available() and bool(req.api_key),
