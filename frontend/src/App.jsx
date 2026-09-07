@@ -24,6 +24,8 @@ import {
   PieChart,
   ShieldCheck,
   X,
+  Pencil,
+  Plus,
 } from 'lucide-react';
 
 const extractErrorMessage = (errData, defaultMsg = 'Ocorreu um erro na operação.') => {
@@ -146,6 +148,9 @@ export default function App() {
   // Persistent Token Economy Telemetry State
   const [tokenStats, setTokenStats] = useState(null);
   const [copiedReadme, setCopiedReadme] = useState(false);
+
+  // Profile Item Editor Modal State
+  const [editingItem, setEditingItem] = useState(null);
 
   useEffect(() => {
     if (apiKey) {
@@ -309,6 +314,189 @@ export default function App() {
       }
     } catch (err) {
       console.error('Falha ao resetar perfil:', err);
+    }
+  };
+
+  const handleOpenAdd = (type) => {
+    if (type === 'experience') {
+      setEditingItem({
+        type,
+        index: null,
+        form: { role: '', company: '', period: '', location: '', tags: '', raw_bullets: '' },
+      });
+    } else if (type === 'project') {
+      setEditingItem({
+        type,
+        index: null,
+        form: { title: '', subtitle: '', period: '', tags: '', raw_bullets: '' },
+      });
+    } else if (type === 'award') {
+      setEditingItem({
+        type,
+        index: null,
+        form: { title: '', period_or_date: '', description: '' },
+      });
+    }
+  };
+
+  const handleOpenEdit = (type, index, item) => {
+    if (type === 'personal') {
+      setEditingItem({
+        type,
+        index: null,
+        form: {
+          name: profile?.personal?.name || '',
+          location: profile?.personal?.location || '',
+          email: profile?.personal?.email || '',
+          phone: profile?.personal?.phone || '',
+          linkedin: profile?.personal?.linkedin || '',
+          github: profile?.personal?.github || '',
+          lattes: profile?.personal?.lattes || '',
+        },
+      });
+    } else if (type === 'experience') {
+      setEditingItem({
+        type,
+        index,
+        form: {
+          role: item.role || '',
+          company: item.company || '',
+          period: item.period || '',
+          location: item.location || '',
+          tags: (item.tags || []).join(', '),
+          raw_bullets: (item.raw_bullets || []).join('\n'),
+        },
+      });
+    } else if (type === 'project') {
+      setEditingItem({
+        type,
+        index,
+        form: {
+          title: item.title || '',
+          subtitle: item.subtitle || '',
+          period: item.period || '',
+          tags: (item.tags || []).join(', '),
+          raw_bullets: (item.raw_bullets || []).join('\n'),
+        },
+      });
+    } else if (type === 'award') {
+      setEditingItem({
+        type,
+        index,
+        form: {
+          title: item.title || '',
+          period_or_date: item.period_or_date || '',
+          description: item.description || '',
+        },
+      });
+    }
+  };
+
+  const handleSaveItem = async (e) => {
+    e.preventDefault();
+    if (!editingItem || !profile) return;
+    const { type, index, form } = editingItem;
+
+    let updated = { ...profile };
+
+    if (type === 'personal') {
+      updated = {
+        ...profile,
+        personal: {
+          ...profile.personal,
+          name: form.name?.trim() || profile.personal.name,
+          location: form.location?.trim() || null,
+          email: form.email?.trim() || null,
+          phone: form.phone?.trim() || null,
+          linkedin: form.linkedin?.trim() || null,
+          github: form.github?.trim() || null,
+          lattes: form.lattes?.trim() || null,
+        },
+      };
+    } else if (type === 'experience') {
+      const exp = {
+        id: index !== null ? profile.experiences[index]?.id : `exp-custom-${Date.now()}`,
+        role: form.role?.trim() || 'Cargo',
+        company: form.company?.trim() || 'Empresa',
+        period: form.period?.trim() || '',
+        location: form.location?.trim() || null,
+        tags: form.tags ? form.tags.split(',').map((t) => t.trim()).filter(Boolean) : [],
+        raw_bullets: form.raw_bullets ? form.raw_bullets.split('\n').map((b) => b.trim()).filter(Boolean) : [],
+        formatted_bullets: [],
+        metrics: [],
+        score: index !== null ? (profile.experiences[index]?.score || 0.0) : 0.0,
+      };
+      let exps = [...(profile.experiences || [])];
+      if (index !== null) {
+        exps[index] = { ...exps[index], ...exp };
+      } else {
+        exps = [exp, ...exps];
+      }
+      updated.experiences = exps;
+    } else if (type === 'project') {
+      const proj = {
+        id: index !== null ? profile.projects[index]?.id : `proj-custom-${Date.now()}`,
+        title: form.title?.trim() || 'Projeto',
+        subtitle: form.subtitle?.trim() || null,
+        period: form.period?.trim() || null,
+        tags: form.tags ? form.tags.split(',').map((t) => t.trim()).filter(Boolean) : [],
+        raw_bullets: form.raw_bullets ? form.raw_bullets.split('\n').map((b) => b.trim()).filter(Boolean) : [],
+        formatted_bullets: [],
+        metrics: [],
+        score: index !== null ? (profile.projects[index]?.score || 0.0) : 0.0,
+      };
+      let projs = [...(profile.projects || [])];
+      if (index !== null) {
+        projs[index] = { ...projs[index], ...proj };
+      } else {
+        projs = [proj, ...projs];
+      }
+      updated.projects = projs;
+    } else if (type === 'award') {
+      const aw = {
+        id: index !== null ? profile.awards_and_leadership[index]?.id : `award-custom-${Date.now()}`,
+        title: form.title?.trim() || 'Conquista',
+        period_or_date: form.period_or_date?.trim() || 'N/A',
+        description: form.description?.trim() || '',
+        score: index !== null ? (profile.awards_and_leadership[index]?.score || 0.0) : 0.0,
+      };
+      let aws = [...(profile.awards_and_leadership || [])];
+      if (index !== null) {
+        aws[index] = { ...aws[index], ...aw };
+      } else {
+        aws = [aw, ...aws];
+      }
+      updated.awards_and_leadership = aws;
+    }
+
+    setProfile(updated);
+    try {
+      await persistProfile(updated);
+      setEditingItem(null);
+    } catch (err) {
+      alert(extractErrorMessage(err, 'Erro ao salvar alterações no perfil.'));
+    }
+  };
+
+  const handleDeleteItem = async (type, index) => {
+    if (!profile) return;
+    const typeLabel = type === 'experience' ? 'experiência' : type === 'project' ? 'projeto' : 'conquista';
+    if (!window.confirm(`Deseja realmente excluir esta ${typeLabel}?`)) return;
+
+    let updated = { ...profile };
+    if (type === 'experience') {
+      updated.experiences = (profile.experiences || []).filter((_, i) => i !== index);
+    } else if (type === 'project') {
+      updated.projects = (profile.projects || []).filter((_, i) => i !== index);
+    } else if (type === 'award') {
+      updated.awards_and_leadership = (profile.awards_and_leadership || []).filter((_, i) => i !== index);
+    }
+
+    setProfile(updated);
+    try {
+      await persistProfile(updated);
+    } catch (err) {
+      alert(extractErrorMessage(err, 'Erro ao salvar remoção no perfil.'));
     }
   };
 
@@ -940,6 +1128,14 @@ export default function App() {
                         Ativo: data/active_profile.yaml
                       </span>
                       <button
+                        onClick={() => handleOpenEdit('personal')}
+                        className="text-[11px] font-sans font-medium text-[#2c2620] hover:text-[#8b5a2b] flex items-center gap-1 border border-[#cfc3a9] bg-[#fffdfa] px-2 py-0.5 rounded transition"
+                        title="Editar informações pessoais"
+                      >
+                        <Pencil className="h-3 w-3 text-[#8b5a2b]" />
+                        <span>Editar</span>
+                      </button>
+                      <button
                         onClick={handleResetProfile}
                         className="text-[11px] font-sans font-medium text-[#8b5a2b] hover:text-[#5e3814] hover:underline"
                         title="Restaurar perfil inicial padrão de exemplo"
@@ -955,15 +1151,15 @@ export default function App() {
                     </div>
                     <div>
                       <span className="text-xs font-sans text-[#786c5e] block">Localização</span>
-                      <span className="text-[#3a3127]">{profile.personal.location}</span>
+                      <span className="text-[#3a3127]">{profile.personal.location || '-'}</span>
                     </div>
                     <div>
                       <span className="text-xs font-sans text-[#786c5e] block">E-mail</span>
-                      <span className="text-[#3a3127]">{profile.personal.email}</span>
+                      <span className="text-[#3a3127]">{profile.personal.email || '-'}</span>
                     </div>
                     <div>
                       <span className="text-xs font-sans text-[#786c5e] block">LinkedIn</span>
-                      <span className="text-[#3a3127]">{profile.personal.linkedin}</span>
+                      <span className="text-[#3a3127] truncate block">{profile.personal.linkedin || '-'}</span>
                     </div>
                   </div>
                 </div>
@@ -998,66 +1194,177 @@ export default function App() {
 
                 {/* Experience List Summary */}
                 <div className="space-y-2">
-                  <h4 className="text-xs font-sans font-bold text-[#5e5142] uppercase tracking-wider">
-                    Experiências Registradas
-                  </h4>
-                  <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-sans font-bold text-[#5e5142] uppercase tracking-wider">
+                      Experiências Registradas ({profile.experiences?.length || 0})
+                    </h4>
+                    <button
+                      onClick={() => handleOpenAdd('experience')}
+                      className="text-xs font-sans font-medium text-[#206634] hover:text-[#144221] bg-[#eef8f0] border border-[#a2d8b0] px-2.5 py-1 rounded flex items-center gap-1 transition"
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                      <span>Nova Experiência</span>
+                    </button>
+                  </div>
+                  <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
                     {profile.experiences?.map((exp, idx) => (
-                      <div key={idx} className="p-3 rounded border border-[#dfd5be] bg-[#fffdfa] text-xs">
-                        <div className="flex justify-between font-bold text-sm text-[#221c16]">
-                          <span>{exp.role}</span>
-                          <span className="text-[#756758] font-normal text-xs">{exp.period}</span>
+                      <div key={idx} className="p-3 rounded border border-[#dfd5be] bg-[#fffdfa] text-xs space-y-1">
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <span className="font-bold text-sm text-[#221c16] block">{exp.role}</span>
+                            <span className="text-[#635749] text-xs">{exp.company} {exp.location ? `• ${exp.location}` : ''}</span>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <span className="text-[#756758] font-normal text-xs mr-1">{exp.period}</span>
+                            <button
+                              onClick={() => handleOpenEdit('experience', idx, exp)}
+                              className="p-1 rounded text-[#756758] hover:text-[#2c2620] hover:bg-[#eee6d4] transition"
+                              title="Editar experiência"
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              onClick={() => handleDeleteItem('experience', idx)}
+                              className="p-1 rounded text-[#993333] hover:text-[#771111] hover:bg-[#fce8e8] transition"
+                              title="Excluir experiência"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
                         </div>
-                        <div className="text-[#635749] text-xs mt-0.5">{exp.company} • {exp.location}</div>
-                        <div className="text-[11px] text-[#8c7f70] mt-1.5 flex flex-wrap gap-1">
-                          {exp.tags?.slice(0, 5).map((t, i) => (
-                            <span key={i} className="bg-[#f0e9dc] px-2 py-0.5 rounded">{t}</span>
-                          ))}
-                        </div>
+                        {exp.tags && exp.tags.length > 0 && (
+                          <div className="text-[11px] text-[#8c7f70] pt-1 flex flex-wrap gap-1">
+                            {exp.tags.slice(0, 6).map((t, i) => (
+                              <span key={i} className="bg-[#f0e9dc] px-2 py-0.5 rounded">{t}</span>
+                            ))}
+                          </div>
+                        )}
+                        {exp.raw_bullets && exp.raw_bullets.length > 0 && (
+                          <p className="text-[11px] text-[#5e5142] italic line-clamp-2 pt-0.5">
+                            "{exp.raw_bullets[0]}"
+                          </p>
+                        )}
                       </div>
                     ))}
                   </div>
                 </div>
 
                 {/* Projects Summary */}
-                {profile.projects && profile.projects.length > 0 && (
-                  <div className="space-y-2">
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
                     <h4 className="text-xs font-sans font-bold text-[#5e5142] uppercase tracking-wider">
-                      Projetos Registrados ({profile.projects.length})
+                      Projetos Registrados ({profile.projects?.length || 0})
                     </h4>
-                    <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
-                      {profile.projects.map((proj, idx) => (
-                        <div key={idx} className="p-3 rounded border border-[#dfd5be] bg-[#fffdfa] text-xs">
-                          <div className="flex justify-between font-bold text-sm text-[#221c16]">
-                            <span>{proj.title}</span>
-                            <span className="text-[#756758] font-normal text-xs">{proj.period || proj.start_year || ''}</span>
+                    <button
+                      onClick={() => handleOpenAdd('project')}
+                      className="text-xs font-sans font-medium text-[#206634] hover:text-[#144221] bg-[#eef8f0] border border-[#a2d8b0] px-2.5 py-1 rounded flex items-center gap-1 transition"
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                      <span>Novo Projeto</span>
+                    </button>
+                  </div>
+                  <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                    {(profile.projects || []).map((proj, idx) => (
+                      <div key={idx} className="p-3 rounded border border-[#dfd5be] bg-[#fffdfa] text-xs space-y-1">
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <span className="font-bold text-sm text-[#221c16] block">{proj.title}</span>
+                            {proj.subtitle && <span className="text-[#635749] text-xs">{proj.subtitle}</span>}
                           </div>
-                          {proj.subtitle && <div className="text-[#635749] text-xs mt-0.5">{proj.subtitle}</div>}
-                          <div className="text-[11px] text-[#8c7f70] mt-1.5 flex flex-wrap gap-1">
-                            {proj.tags?.slice(0, 5).map((t, i) => (
+                          <div className="flex items-center gap-1">
+                            <span className="text-[#756758] font-normal text-xs mr-1">{proj.period || proj.start_year || ''}</span>
+                            <button
+                              onClick={() => handleOpenEdit('project', idx, proj)}
+                              className="p-1 rounded text-[#756758] hover:text-[#2c2620] hover:bg-[#eee6d4] transition"
+                              title="Editar projeto"
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              onClick={() => handleDeleteItem('project', idx)}
+                              className="p-1 rounded text-[#993333] hover:text-[#771111] hover:bg-[#fce8e8] transition"
+                              title="Excluir projeto"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                        {proj.tags && proj.tags.length > 0 && (
+                          <div className="text-[11px] text-[#8c7f70] pt-1 flex flex-wrap gap-1">
+                            {proj.tags.slice(0, 6).map((t, i) => (
                               <span key={i} className="bg-[#f0e9dc] px-2 py-0.5 rounded">{t}</span>
                             ))}
                           </div>
-                        </div>
-                      ))}
-                    </div>
+                        )}
+                      </div>
+                    ))}
                   </div>
-                )}
+                </div>
 
                 {/* Awards Summary */}
-                {profile.awards_and_leadership && profile.awards_and_leadership.length > 0 && (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-sans font-bold text-[#5e5142] uppercase tracking-wider">
+                      Conquistas & Certificações ({profile.awards_and_leadership?.length || 0})
+                    </h4>
+                    <button
+                      onClick={() => handleOpenAdd('award')}
+                      className="text-xs font-sans font-medium text-[#206634] hover:text-[#144221] bg-[#eef8f0] border border-[#a2d8b0] px-2.5 py-1 rounded flex items-center gap-1 transition"
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                      <span>Nova Conquista</span>
+                    </button>
+                  </div>
+                  <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                    {(profile.awards_and_leadership || []).map((aw, idx) => (
+                      <div key={idx} className="p-2.5 rounded border border-[#dfd5be] bg-[#fffdfa] text-xs">
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <span className="font-bold text-xs text-[#221c16] block">{aw.title}</span>
+                            {aw.description && <span className="text-[#635749] text-[11px] mt-0.5 block">{aw.description}</span>}
+                          </div>
+                          <div className="flex items-center gap-1 shrink-0 ml-2">
+                            <span className="text-[#756758] font-normal text-[11px] mr-1">{aw.period_or_date}</span>
+                            <button
+                              onClick={() => handleOpenEdit('award', idx, aw)}
+                              className="p-1 rounded text-[#756758] hover:text-[#2c2620] hover:bg-[#eee6d4] transition"
+                              title="Editar conquista"
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              onClick={() => handleDeleteItem('award', idx)}
+                              className="p-1 rounded text-[#993333] hover:text-[#771111] hover:bg-[#fce8e8] transition"
+                              title="Excluir conquista"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Skills Section */}
+                {profile.skills && Object.keys(profile.skills).length > 0 && (
                   <div className="space-y-2">
                     <h4 className="text-xs font-sans font-bold text-[#5e5142] uppercase tracking-wider">
-                      Conquistas & Reconhecimentos ({profile.awards_and_leadership.length})
+                      Competências Registradas por Categoria
                     </h4>
-                    <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
-                      {profile.awards_and_leadership.map((aw, idx) => (
-                        <div key={idx} className="p-2.5 rounded border border-[#dfd5be] bg-[#fffdfa] text-xs">
-                          <div className="flex justify-between font-bold text-xs text-[#221c16]">
-                            <span>{aw.title}</span>
-                            <span className="text-[#756758] font-normal text-[11px]">{aw.period_or_date}</span>
+                    <div className="space-y-2">
+                      {Object.entries(profile.skills).map(([category, items], idx) => (
+                        <div key={idx} className="p-3 rounded border border-[#dfd5be] bg-[#fffdfa] text-xs space-y-1.5">
+                          <span className="font-bold text-[#3d3327] uppercase text-[11px] tracking-wider block">
+                            {category}
+                          </span>
+                          <div className="flex flex-wrap gap-1">
+                            {(Array.isArray(items) ? items : [items]).map((sk, i) => (
+                              <span key={i} className="bg-[#f0e9dc] text-[#4d4235] px-2 py-0.5 rounded text-[11px]">
+                                {sk}
+                              </span>
+                            ))}
                           </div>
-                          {aw.description && <div className="text-[#635749] text-[11px] mt-0.5">{aw.description}</div>}
                         </div>
                       ))}
                     </div>
@@ -2092,6 +2399,276 @@ export default function App() {
           </div>
         </div>
       </div>
+
+      {/* Profile Item Editor Modal */}
+      {editingItem && (
+        <div className="fixed inset-0 bg-[#2c2620]/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+          <div className="bg-[#fdfbf7] border border-[#cfc3a9] rounded-lg max-w-lg w-full p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-[#ded5bf] pb-3">
+              <h3 className="font-serif font-bold text-base text-[#221c16]">
+                {editingItem.type === 'personal'
+                  ? 'Editar Dados Pessoais'
+                  : editingItem.index !== null
+                  ? `Editar ${editingItem.type === 'experience' ? 'Experiência' : editingItem.type === 'project' ? 'Projeto' : 'Conquista'}`
+                  : `Nova ${editingItem.type === 'experience' ? 'Experiência' : editingItem.type === 'project' ? 'Projeto' : 'Conquista'}`}
+              </h3>
+              <button
+                onClick={() => setEditingItem(null)}
+                className="p-1 rounded text-[#756758] hover:text-[#221c16] hover:bg-[#ede5d2] transition"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveItem} className="space-y-4 text-xs font-sans">
+              {editingItem.type === 'personal' && (
+                <>
+                  <div>
+                    <label className="block text-[11px] font-bold text-[#5e5142] uppercase mb-1">Nome Completo *</label>
+                    <input
+                      type="text"
+                      required
+                      value={editingItem.form.name || ''}
+                      onChange={(e) => setEditingItem({ ...editingItem, form: { ...editingItem.form, name: e.target.value } })}
+                      className="w-full bg-[#fffdfa] border border-[#d8ccb4] rounded px-3 py-1.5 text-xs text-[#2c2620]"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[11px] font-bold text-[#5e5142] uppercase mb-1">Localização</label>
+                      <input
+                        type="text"
+                        value={editingItem.form.location || ''}
+                        onChange={(e) => setEditingItem({ ...editingItem, form: { ...editingItem.form, location: e.target.value } })}
+                        placeholder="Cidade, Estado, País"
+                        className="w-full bg-[#fffdfa] border border-[#d8ccb4] rounded px-3 py-1.5 text-xs text-[#2c2620]"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-bold text-[#5e5142] uppercase mb-1">E-mail</label>
+                      <input
+                        type="email"
+                        value={editingItem.form.email || ''}
+                        onChange={(e) => setEditingItem({ ...editingItem, form: { ...editingItem.form, email: e.target.value } })}
+                        className="w-full bg-[#fffdfa] border border-[#d8ccb4] rounded px-3 py-1.5 text-xs text-[#2c2620]"
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[11px] font-bold text-[#5e5142] uppercase mb-1">LinkedIn (URL)</label>
+                      <input
+                        type="text"
+                        value={editingItem.form.linkedin || ''}
+                        onChange={(e) => setEditingItem({ ...editingItem, form: { ...editingItem.form, linkedin: e.target.value } })}
+                        className="w-full bg-[#fffdfa] border border-[#d8ccb4] rounded px-3 py-1.5 text-xs text-[#2c2620]"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-bold text-[#5e5142] uppercase mb-1">GitHub (URL)</label>
+                      <input
+                        type="text"
+                        value={editingItem.form.github || ''}
+                        onChange={(e) => setEditingItem({ ...editingItem, form: { ...editingItem.form, github: e.target.value } })}
+                        className="w-full bg-[#fffdfa] border border-[#d8ccb4] rounded px-3 py-1.5 text-xs text-[#2c2620]"
+                      />
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {editingItem.type === 'experience' && (
+                <>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[11px] font-bold text-[#5e5142] uppercase mb-1">Cargo / Função *</label>
+                      <input
+                        type="text"
+                        required
+                        value={editingItem.form.role || ''}
+                        onChange={(e) => setEditingItem({ ...editingItem, form: { ...editingItem.form, role: e.target.value } })}
+                        placeholder="Ex: Engenheiro de Software"
+                        className="w-full bg-[#fffdfa] border border-[#d8ccb4] rounded px-3 py-1.5 text-xs text-[#2c2620]"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-bold text-[#5e5142] uppercase mb-1">Empresa *</label>
+                      <input
+                        type="text"
+                        required
+                        value={editingItem.form.company || ''}
+                        onChange={(e) => setEditingItem({ ...editingItem, form: { ...editingItem.form, company: e.target.value } })}
+                        placeholder="Ex: Google, UFMG, Startup"
+                        className="w-full bg-[#fffdfa] border border-[#d8ccb4] rounded px-3 py-1.5 text-xs text-[#2c2620]"
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[11px] font-bold text-[#5e5142] uppercase mb-1">Período</label>
+                      <input
+                        type="text"
+                        value={editingItem.form.period || ''}
+                        onChange={(e) => setEditingItem({ ...editingItem, form: { ...editingItem.form, period: e.target.value } })}
+                        placeholder="Ex: Jan 2024 - Presente"
+                        className="w-full bg-[#fffdfa] border border-[#d8ccb4] rounded px-3 py-1.5 text-xs text-[#2c2620]"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-bold text-[#5e5142] uppercase mb-1">Localização</label>
+                      <input
+                        type="text"
+                        value={editingItem.form.location || ''}
+                        onChange={(e) => setEditingItem({ ...editingItem, form: { ...editingItem.form, location: e.target.value } })}
+                        placeholder="Ex: Belo Horizonte, MG"
+                        className="w-full bg-[#fffdfa] border border-[#d8ccb4] rounded px-3 py-1.5 text-xs text-[#2c2620]"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-bold text-[#5e5142] uppercase mb-1">
+                      Tags / Tecnologias (separadas por vírgula)
+                    </label>
+                    <input
+                      type="text"
+                      value={editingItem.form.tags || ''}
+                      onChange={(e) => setEditingItem({ ...editingItem, form: { ...editingItem.form, tags: e.target.value } })}
+                      placeholder="Ex: TypeScript, NestJS, React, Docker"
+                      className="w-full bg-[#fffdfa] border border-[#d8ccb4] rounded px-3 py-1.5 text-xs text-[#2c2620]"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-bold text-[#5e5142] uppercase mb-1">
+                      Bullets de Impacto (um por linha)
+                    </label>
+                    <textarea
+                      rows={4}
+                      value={editingItem.form.raw_bullets || ''}
+                      onChange={(e) => setEditingItem({ ...editingItem, form: { ...editingItem.form, raw_bullets: e.target.value } })}
+                      placeholder="Descreva realizações com verbos de ação e métricas..."
+                      className="w-full bg-[#fffdfa] border border-[#d8ccb4] rounded p-2 text-xs text-[#2c2620] resize-y leading-relaxed"
+                    />
+                  </div>
+                </>
+              )}
+
+              {editingItem.type === 'project' && (
+                <>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[11px] font-bold text-[#5e5142] uppercase mb-1">Título do Projeto *</label>
+                      <input
+                        type="text"
+                        required
+                        value={editingItem.form.title || ''}
+                        onChange={(e) => setEditingItem({ ...editingItem, form: { ...editingItem.form, title: e.target.value } })}
+                        placeholder="Ex: AtesN-DS"
+                        className="w-full bg-[#fffdfa] border border-[#d8ccb4] rounded px-3 py-1.5 text-xs text-[#2c2620]"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-bold text-[#5e5142] uppercase mb-1">Subtítulo / Stack</label>
+                      <input
+                        type="text"
+                        value={editingItem.form.subtitle || ''}
+                        onChange={(e) => setEditingItem({ ...editingItem, form: { ...editingItem.form, subtitle: e.target.value } })}
+                        placeholder="Ex: eBPF, XDP, C, Linux Kernel"
+                        className="w-full bg-[#fffdfa] border border-[#d8ccb4] rounded px-3 py-1.5 text-xs text-[#2c2620]"
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[11px] font-bold text-[#5e5142] uppercase mb-1">Período / Ano</label>
+                      <input
+                        type="text"
+                        value={editingItem.form.period || ''}
+                        onChange={(e) => setEditingItem({ ...editingItem, form: { ...editingItem.form, period: e.target.value } })}
+                        placeholder="Ex: 2025"
+                        className="w-full bg-[#fffdfa] border border-[#d8ccb4] rounded px-3 py-1.5 text-xs text-[#2c2620]"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-bold text-[#5e5142] uppercase mb-1">Tags (vírgula)</label>
+                      <input
+                        type="text"
+                        value={editingItem.form.tags || ''}
+                        onChange={(e) => setEditingItem({ ...editingItem, form: { ...editingItem.form, tags: e.target.value } })}
+                        placeholder="Ex: C, eBPF, DNS"
+                        className="w-full bg-[#fffdfa] border border-[#d8ccb4] rounded px-3 py-1.5 text-xs text-[#2c2620]"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-bold text-[#5e5142] uppercase mb-1">
+                      Bullets de Descrição & Métricas (um por linha)
+                    </label>
+                    <textarea
+                      rows={3}
+                      value={editingItem.form.raw_bullets || ''}
+                      onChange={(e) => setEditingItem({ ...editingItem, form: { ...editingItem.form, raw_bullets: e.target.value } })}
+                      placeholder="Descreva as soluções e impactos alcançados..."
+                      className="w-full bg-[#fffdfa] border border-[#d8ccb4] rounded p-2 text-xs text-[#2c2620] resize-y leading-relaxed"
+                    />
+                  </div>
+                </>
+              )}
+
+              {editingItem.type === 'award' && (
+                <>
+                  <div>
+                    <label className="block text-[11px] font-bold text-[#5e5142] uppercase mb-1">Título da Conquista / Certificação *</label>
+                    <input
+                      type="text"
+                      required
+                      value={editingItem.form.title || ''}
+                      onChange={(e) => setEditingItem({ ...editingItem, form: { ...editingItem.form, title: e.target.value } })}
+                      placeholder="Ex: Relevância Acadêmica na Semana do Conhecimento UFMG 2025"
+                      className="w-full bg-[#fffdfa] border border-[#d8ccb4] rounded px-3 py-1.5 text-xs text-[#2c2620]"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-bold text-[#5e5142] uppercase mb-1">Data / Ano / Tipo</label>
+                    <input
+                      type="text"
+                      value={editingItem.form.period_or_date || ''}
+                      onChange={(e) => setEditingItem({ ...editingItem, form: { ...editingItem.form, period_or_date: e.target.value } })}
+                      placeholder="Ex: 2025 ou Certificação"
+                      className="w-full bg-[#fffdfa] border border-[#d8ccb4] rounded px-3 py-1.5 text-xs text-[#2c2620]"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-bold text-[#5e5142] uppercase mb-1">Descrição / Detalhes</label>
+                    <textarea
+                      rows={2}
+                      value={editingItem.form.description || ''}
+                      onChange={(e) => setEditingItem({ ...editingItem, form: { ...editingItem.form, description: e.target.value } })}
+                      placeholder="Ex: Premiado pelo Departamento de Ciência da Computação..."
+                      className="w-full bg-[#fffdfa] border border-[#d8ccb4] rounded p-2 text-xs text-[#2c2620] resize-y"
+                    />
+                  </div>
+                </>
+              )}
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-[#ded5bf]">
+                <button
+                  type="button"
+                  onClick={() => setEditingItem(null)}
+                  className="px-4 py-2 rounded bg-[#fffdfa] hover:bg-[#ede5d2] border border-[#cfc3a9] text-[#5e5142] text-xs font-medium transition"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 rounded bg-[#206634] hover:bg-[#164b25] text-[#f7f3e8] text-xs font-semibold transition shadow-xs"
+                >
+                  Salvar Alterações
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
