@@ -1,0 +1,119 @@
+personal:
+  name: "Candidate Name"
+  location: "City - State"
+  email: "candidate@example.com"
+  phone: "+55 (11) 99999-9999"
+  linkedin: "https://www.linkedin.com/in/candidate/"
+  github: "https://github.com/candidate"
+  lattes: "0000000000000000"
+  visible_items:
+    - location
+    - email
+    - phone
+    - linkedin
+    - github
+    - lattes
+
+last_updated: "Last updated in August 2026"
+primary_color_rgb: "0, 79, 144"
+
+education:
+  - institution: "Federal University (UFMG)"
+    degree: "Bachelor of Science in Information Systems"
+    period: "2023 – Feb 2027 (Expected)"
+
+experiences:
+  - id: "exp-lab"
+    role: "Research Fellow (Scholarship)"
+    company: "Computer Engineering Lab"
+    company_url: "https://example.com/lab"
+    period: "04/2024 – Present"
+    start_year: 2024
+    is_current: true
+    category: "systems"
+    tags:
+      - "eBPF"
+      - "XDP"
+      - "C"
+      - "Go"
+      - "Linux Kernel"
+      - "Networking"
+      - "CUDA"
+      - "Machine Learning"
+    raw_bullets:
+      - "Developed a high-performance \\textbf{DNS Resolver} (\\textbf{eBPF/XDP}|\\textbf{C}|\\textbf{Go}) achieving a \\textbf{213\\% throughput increase} and \\textbf{51\\% latency reduction} via kernel-level packet processing. Published at \\textbf{SBESC 2025}."
+      - "Author of the short course \\textbf{GPU Packet Processing} for \\textbf{SBRC 2025}, addressing massive parallelism (\\textbf{CUDA/DOCA}) and memory management."
+      - "Engineered a hardware-offloaded \\textbf{eBPF/XDP} cache layer, boosting throughput up to \\textbf{2.85$\\times$}, cutting latency by \\textbf{51\\%} (p99 tail latency reduced by \\textbf{>70ms}), and lowering CPU overhead by \\textbf{35\\%}."
+      - "Developed a real-time DDoS mitigation system running ML models (\\textbf{RF}, \\textbf{DT}, \\textbf{NN}) in-kernel at the \\textbf{XDP hook} and via \\textbf{AF\\_XDP} kernel bypass."
+
+  - id: "exp-intern"
+    role: "Full Stack & Mobile Developer Intern"
+    company: "Tech Company"
+    company_url: "https://example.com/company"
+    period: "09/2025 – Present"
+    start_year: 2025
+    is_current: true
+    category: "web"
+    tags:
+      - "React"
+      - "React Native"
+      - "TypeScript"
+      - "NestJS"
+      - "TypeORM"
+      - "Playwright"
+      - "AWS"
+      - "TanStack Query"
+    raw_bullets:
+      - "Developed UIs with \\textbf{React.js} and \\textbf{MUI}, creating a reusable library that \\textbf{cut dev time by 50\\%}."
+      - "Delivered cross-platform (\\textbf{iOS/Android}) features and optimized API state with \\textbf{TanStack Query}."
+      - "Built scalable \\textbf{REST APIs} using \\textbf{NestJS}, \\textbf{TypeORM}, and \\textbf{TypeScript}."
+      - "Covered \\textbf{80\\% of critical flows} via \\textbf{Playwright E2E} and unit tests, reducing regression bugs."
+      - "Adopted \\textbf{Spec-Driven Development (SDD)} using \\textbf{Claude} to draft specs and execution plans."
+      - "Handled \\textbf{AWS} deployments and log debugging to ensure high availability and quick issue resolution."
+
+awards_and_leadership:
+  - id: "award-1"
+    title: "Academic Relevance Award - Knowledge Week"
+    period_or_date: "10/2025"
+    description: "Distinguished for outstanding technical contribution to networking systems with the \\textbf{DNS Resolver} project."
+    tags: ["Award", "Networking", "eBPF", "Research"]
+    category: "systems"
+
+  - id: "ta-1"
+    title: "Teaching Assistant (Scholarship) - Analytic Geometry and Linear Algebra"
+    period_or_date: "06/2023 - 01/2024"
+    description: "Mentored undergraduate students, providing technical guidance on complex algebraic concepts."
+    tags: ["Leadership", "Mentorship", "Teaching", "Algebra"]
+    category: "leadership"
+
+projects:
+  - id: "proj-crawler"
+    title: "Web Crawler"
+    subtitle: "Python, multi-threading"
+    url: "https://github.com/example/web-crawler"
+    url_label: "GitHub"
+    start_year: 2024
+    category: "systems"
+    tags: ["Python", "Concurrency", "Threading", "WARC", "Storage", "Benchmarking"]
+    raw_bullets:
+      - "Increased throughput from 0.6 to \\textbf{9.6 pages/sec (16x increase)} using \\textbf{threads} while ensuring politeness."
+      - "Achieved a \\textbf{73.3\\% reduction in peak memory usage} by engineering a \\textbf{hybrid memory/disk queue} and URL hashing, with \\textbf{only a 5\\% impact} on total throughput."
+      - "Automated performance benchmarks and \\textbf{WARC storage} for a 100k-page corpus optimally."
+
+  - id: "proj-moovy"
+    title: "Moovy"
+    subtitle: "NestJS, React, React Native, PostgreSQL, Docker, Redis"
+    url: "https://github.com/example/moovy-mvp"
+    url_label: "GitHub"
+    start_year: 2024
+    category: "web"
+    tags: ["NestJS", "React", "React Native", "PostgreSQL", "Docker", "Redis", "Full Stack", "Mobile"]
+    raw_bullets:
+      - "\\textbf{Web} and \\textbf{mobile} application featuring an \\textbf{offline-first} system for audio reviews and movie browsing."
+      - "\\textbf{Optimized Render Time} by \\textbf{66\\%}, using \\textbf{React DevTools} to identify and eliminate reconciliation bottlenecks."
+      - "Achieved \\textbf{99\\% backend latency reduction} by implementing dual-level caching (Query/Entity) with Redis."
+
+skills:
+  "Programming Languages": "C, C++, Go, Python, JavaScript, TypeScript, SQL."
+  "Technologies": "eBPF/XDP, React, NextJS, React Native, NestJS, Node.js, MUI, TanStack Query, Docker, Kubernetes, Redis, PostgreSQL, Linux Kernel, Git, GitHub Actions, Playwright (E2E), AWS (S3, EC2, Lambda, SQS, SES)."
+  "Languages Spoken": "English (Fluent), Portuguese (Native), Japanese (Advanced), Spanish (Intermediate)."

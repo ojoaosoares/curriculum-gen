@@ -1,0 +1,19 @@
+Job Title: Full Stack & Mobile Engineer
+Company: Fintech / High Growth Startup
+Location: São Paulo / Remote
+
+About the Role:
+We are looking for a Full Stack & Mobile Engineer experienced in modern TypeScript, React, React Native, and Node.js (NestJS). You will build customer-facing web and mobile applications with exceptional responsiveness, offline-first architectures, and robust backend APIs.
+
+Responsibilities:
+- Build responsive, accessible user interfaces using React.js and design systems (MUI / Tailwind).
+- Develop cross-platform mobile apps in React Native (iOS/Android) with offline-first synchronization.
+- Implement scalable microservices and RESTful APIs using NestJS, TypeScript, and PostgreSQL / Redis.
+- Ensure 80%+ test coverage with Playwright end-to-end (E2E) testing and Jest unit tests.
+- Deploy and monitor cloud infrastructure on AWS (S3, EC2, Lambda).
+
+Requirements:
+- Strong proficiency in TypeScript, React, React Native, and NestJS.
+- Experience managing state with TanStack Query / Redux.
+- Proven track record optimizing frontend render performance and eliminating reconciliation bottlenecks.
+- Familiarity with PostgreSQL, Redis caching, and Docker.

@@ -1,0 +1,20 @@
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+build/
+output/
+*.aux
+*.log
+*.out
+*.pdf
+.env
+*.env
+
+# Personal profiles containing private phone/email/data
+profile.yaml
+examples/profile_joaosoares.yaml
+examples/profile_personal.yaml
+*personal*.yaml
+*.local.yaml

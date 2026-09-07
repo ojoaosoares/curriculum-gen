@@ -1,0 +1,236 @@
+\documentclass[10pt, letterpaper]{article}
+
+% Packages:
+\usepackage[
+    ignoreheadfoot, % set margins without considering header and footer
+    top=<< margin_top | default('2.0') >> cm,
+    bottom=<< margin_bottom | default('2.0') >> cm,
+    left=<< margin_left | default('2.0') >> cm,
+    right=<< margin_right | default('2.0') >> cm,
+    footskip=1.0 cm,
+]{geometry}
+\usepackage{titlesec}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage[dvipsnames]{xcolor}
+\definecolor{primaryColor}{RGB}{<< primary_color_rgb | default('0, 79, 144') >>}
+\usepackage{enumitem}
+\usepackage{fontawesome5}
+\usepackage{amsmath}
+\usepackage[
+    pdftitle={<< personal.name >> - Resume},
+    pdfauthor={<< personal.name >>},
+    pdfcreator={Curriculum-Gen LaTeX Engine},
+    colorlinks=true,
+    urlcolor=primaryColor
+]{hyperref}
+\usepackage[pscoord]{eso-pic}
+\usepackage{calc}
+\usepackage{bookmark}
+\usepackage{lastpage}
+\usepackage{changepage}
+\usepackage{paracol}
+\usepackage{ifthen}
+\usepackage{needspace}
+\usepackage{iftex}
+\usepackage[T1]{fontenc}
+\usepackage[none]{hyphenat}
+\hyphenpenalty=10000
+\exhyphenpenalty=10000
+
+% Ensure generated pdf is machine readable / ATS parsable:
+\ifPDFTeX
+    \input{glyphtounicode}
+    \pdfgentounicode=1
+    \usepackage[utf8]{inputenc}
+    \usepackage{lmodern}
+\fi
+
+% Settings:
+\AtBeginEnvironment{adjustwidth}{\partopsep0pt}
+\pagestyle{empty}
+\setcounter{secnumdepth}{0}
+\setlength{\parindent}{0pt}
+\setlength{\topskip}{0pt}
+\setlength{\columnsep}{0cm}
+\makeatletter
+\let\ps@customFooterStyle\ps@plain
+\pagestyle{empty}
+\makeatother
+
+\titleformat{\section}{\needspace{4\baselineskip}\bfseries\large}{}{0pt}{}[\vspace{1pt}\titlerule]
+
+\titlespacing{\section}{
+    -1pt
+}{
+    << section_space_top | default('0.25') >> cm
+}{
+    << section_space_bottom | default('0.15') >> cm
+}
+
+\renewcommand\labelitemi{$\circ$}
+\newenvironment{highlights}{
+    \begin{itemize}[
+        topsep=0.08 cm,
+        parsep=0.08 cm,
+        partopsep=0pt,
+        itemsep=0pt,
+        leftmargin=0.4 cm + 10pt
+    ]
+}{
+    \end{itemize}
+}
+
+\newenvironment{highlightsforbulletentries}{
+    \begin{itemize}[
+        topsep=0.08 cm,
+        parsep=0.08 cm,
+        partopsep=0pt,
+        itemsep=0pt,
+        leftmargin=10pt
+    ]
+}{
+    \end{itemize}
+}
+
+\newenvironment{onecolentry}{
+    \begin{adjustwidth}{
+        0.2 cm + 0.00001 cm
+    }{
+        0.2 cm + 0.00001 cm
+    }
+}{
+    \end{adjustwidth}
+}
+
+\newenvironment{twocolentry}[2][]{
+    \onecolentry
+    \def\secondColumn{#2}
+    \setcolumnwidth{\fill, 4.5 cm}
+    \begin{paracol}{2}
+}{
+    \switchcolumn \raggedleft \secondColumn
+    \end{paracol}
+    \endonecolentry
+}
+
+\newenvironment{header}{
+    \setlength{\topsep}{0pt}\par\kern\topsep\centering\linespread{1.5}
+}{
+    \par\kern\topsep
+}
+
+<% if last_updated %>
+\newcommand{\placelastupdatedtext}{%
+  \AddToShipoutPictureFG*{%
+    \put(
+        \LenToUnit{\paperwidth-<< margin_right | default('2.0') >> cm-0.2 cm+0.05cm},
+        \LenToUnit{\paperheight-1.0 cm}
+    ){\vtop{{\null}\makebox[0pt][c]{
+       \small\color{gray}\textit{<< last_updated >>}\hspace{\widthof{<< last_updated >>}}
+    }}}%
+  }%
+}%
+<% else %>
+\newcommand{\placelastupdatedtext}{}
+<% endif %>
+
+\let\hrefWithoutArrow\href
+\renewcommand{\href}[2]{\hrefWithoutArrow{#1}{#2}}
+
+\begin{document}
+    \newcommand{\AND}{\unskip
+        \cleaders\copy\ANDbox\hskip\wd\ANDbox
+        \ignorespaces
+    }
+    \newsavebox\ANDbox
+    \sbox\ANDbox{}
+
+    \placelastupdatedtext
+    \begin{header}
+        \textbf{\fontsize{24 pt}{24 pt}\selectfont << personal.name >>}
+
+        \normalsize
+        <% for item in contact_elements %>
+            <% if not loop.first %>
+        \kern 0.15 cm%
+        \AND%
+        \kern 0.15 cm%
+            <% endif %>
+        << item >>%
+        <% endfor %>
+    \end{header}
+
+<% if education %>
+\section{<< labels.education >>}
+<% for edu in education %>
+\textbf{<< edu.institution >>} \hfill \textit{<< edu.period >>} \\
+\textit{<< edu.degree >>}<% if edu.notes %> -- << edu.notes >><% endif %><% if not loop.last %> \\ \vspace{0.1 cm}<% endif %>
+<% endfor %>
+<% endif %>
+
+<% if experiences %>
+\section{<< labels.experience >>}
+<% for exp in experiences %>
+\begin{twocolentry}{
+\textit{<< exp.period >>}}
+\textbf{<< exp.role >>} - <% if exp.company_url %>\href{<< exp.company_url >>}{\textit{<< exp.company >>}}<% else %>\textit{<< exp.company >>}<% endif %>
+\end{twocolentry}
+
+<% if exp.bullets %>
+\begin{onecolentry}
+    \begin{highlights}
+        <% for bullet in exp.bullets %>
+        \item << bullet >>
+        <% endfor %>
+    \end{highlights}
+\end{onecolentry}
+<% endif %>
+<% if not loop.last %>
+\vspace{0.08 cm}
+<% endif %>
+<% endfor %>
+<% endif %>
+
+<% if awards_and_leadership %>
+\section{<< labels.awards_and_leadership >>}
+<% for item in awards_and_leadership %>
+\textbf{<< item.title >>} \hfill << item.period_or_date >> \\
+<< item.description >>
+<% if not loop.last %>
+\vspace{0.15 cm}
+<% endif %>
+<% endfor %>
+<% endif %>
+
+<% if projects %>
+\section{<< labels.projects >>}
+<% for proj in projects %>
+\begin{twocolentry}{
+<% if proj.url %>\textit{\href{<< proj.url >>}{<< proj.url_label | default('GitHub') >>}}<% elif proj.period %>\textit{<< proj.period >>}<% endif %>}
+\textbf{<< proj.title >><% if proj.subtitle %> - << proj.subtitle >><% endif %>}
+\end{twocolentry}
+
+<% if proj.bullets %>
+\begin{onecolentry}
+    \begin{highlights}
+        <% for bullet in proj.bullets %>
+        \item << bullet >>
+        <% endfor %>
+    \end{highlights}
+\end{onecolentry}
+<% endif %>
+<% if not loop.last %>
+\vspace{0.08 cm}
+<% endif %>
+<% endfor %>
+<% endif %>
+
+<% if skills %>
+\section{<< labels.skills >>}
+<% for skill_cat, skill_val in skills.items() %>
+\noindent \textbf{<< skill_cat >>:} << skill_val >><% if not loop.last %> \\<% endif %>
+<% endfor %>
+<% endif %>
+
+\end{document}

@@ -1,0 +1,72 @@
+# ==============================================================================
+# Curriculum-Gen: Profile Data Pool
+# You can maintain all your experiences, projects, awards, and skills here.
+# The matching engine will select the most relevant, recent, and diverse items
+# to fit strictly into a 1-page ATS-optimized LaTeX CV for each job application.
+# ==============================================================================
+
+personal:
+  name: "Your Full Name"
+  location: "City - State"
+  email: "your.email@example.com"
+  phone: "+1 (555) 123-4567"
+  linkedin: "https://www.linkedin.com/in/yourhandle/"
+  github: "https://github.com/yourhandle"
+  lattes: "" # CNPq Lattes ID (for Brazilian researchers) or leave blank
+  website: "yourportfolio.dev"
+  # You can customize which contact items appear and their order:
+  visible_items:
+    - location
+    - email
+    - phone
+    - linkedin
+    - github
+
+last_updated: "Last updated in September 2026"
+primary_color_rgb: "0, 79, 144" # Deep professional blue
+
+education:
+  - institution: "Your University"
+    degree: "Bachelor of Science in Computer Science"
+    period: "2022 – 2026 (Expected)"
+    notes: ""
+
+experiences:
+  - id: "exp-1"
+    role: "Software Engineering Intern"
+    company: "Tech Corp"
+    company_url: "https://techcorp.example.com"
+    period: "06/2024 – Present"
+    start_year: 2024
+    is_current: true
+    category: "backend" # backend, frontend, systems, ml, mobile
+    tags: ["Go", "Docker", "Kubernetes", "PostgreSQL", "gRPC"]
+    raw_bullets:
+      - "Engineered a distributed message queue in Go, increasing throughput by 140% and reducing consumer latency by 45%."
+      - "Automated deployment pipeline with GitHub Actions and Docker, reducing release cycle time from 2 hours to 15 minutes."
+
+awards_and_leadership:
+  - id: "award-1"
+    title: "1st Place - University Hackathon"
+    period_or_date: "11/2024"
+    description: "Built an AI-assisted diagnostic prototype in 48 hours among 50+ competing teams."
+    tags: ["Hackathon", "AI", "Leadership"]
+    category: "leadership"
+
+projects:
+  - id: "proj-1"
+    title: "FastKV"
+    subtitle: "Rust, Raft, Distributed Systems"
+    url: "https://github.com/yourhandle/fastkv"
+    url_label: "GitHub"
+    start_year: 2024
+    category: "systems"
+    tags: ["Rust", "Distributed Systems", "Raft", "Consensus"]
+    raw_bullets:
+      - "Implemented a distributed, strongly consistent key-value store using the Raft consensus algorithm in Rust."
+      - "Achieved 45,000 requests/sec with sub-millisecond p95 latency under high contention benchmarks."
+
+skills:
+  "Programming Languages": "C, C++, Go, Python, TypeScript, Rust, SQL"
+  "Technologies": "Docker, Kubernetes, Redis, PostgreSQL, Linux, Git, AWS"
+  "Languages Spoken": "English (Fluent), Portuguese (Native)"

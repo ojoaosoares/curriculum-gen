@@ -1,0 +1,19 @@
+Job Title: Systems & Network Software Engineer
+Company: Cloudflare / Fastly / Core Infra
+Location: Remote
+
+About the Role:
+We are seeking a Systems Engineer to design, implement, and maintain high-throughput, low-latency networking and kernel-level infrastructure. You will work with packet processing, Linux kernel bypass, eBPF/XDP, performance optimization, and distributed systems.
+
+Responsibilities:
+- Build high-performance networking pipelines using C, Go, or Rust.
+- Leverage eBPF/XDP and kernel bypass mechanisms (AF_XDP, DPDK) for packet filtering, routing, and DDoS mitigation.
+- Optimize memory management, cache performance, and tail latency (p99).
+- Benchmark throughput and profile system bottlenecks using Linux perf and hardware counters.
+- Collaborate with research teams on GPU-accelerated networking and packet processing.
+
+Requirements:
+- Strong programming experience in C, C++, or Go.
+- Hands-on experience with Linux networking, socket programming, or eBPF/XDP.
+- Understanding of computer networks (DNS, TCP/IP, UDP, routing).
+- Demonstrated experience measuring and improving throughput, latency, and CPU overhead.
