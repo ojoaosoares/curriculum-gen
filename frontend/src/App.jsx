@@ -758,6 +758,7 @@ export default function App() {
             mode: mode,
             cross_refs: data.cross_refs || [],
             itemType: itemType,
+            fallback_reason: data.fallback_reason || null,
           });
           // Update live telemetry counters immediately
           fetchTokenStats();
@@ -4185,15 +4186,15 @@ export default function App() {
                       </span>
                     </div>
                     <div className="flex items-center gap-2">
-                      {aiSuggestionState.tokens_saved > 0 ? (
-                        <span className="text-[10px] font-mono bg-[#eef8f0] text-[#1c6434] border border-[#a2d8b0] px-2 py-0.5 rounded flex items-center gap-1 font-semibold">
-                          <Zap className="h-2.5 w-2.5" />
-                          {aiSuggestionState.tokens_saved} tokens poupados ({aiSuggestionState.provider === 'offline_heuristic' ? 'IA Offline' : 'LLM'})
-                        </span>
-                      ) : (
+                      {aiSuggestionState.tokens_used > 0 ? (
                         <span className="text-[10px] font-mono bg-[#fdf5eb] text-[#8b5a2b] border border-[#f0d4b8] px-2 py-0.5 rounded flex items-center gap-1 font-semibold">
                           <Sparkles className="h-2.5 w-2.5" />
-                          {aiSuggestionState.tokens_used} tokens consumidos
+                          {aiSuggestionState.tokens_used} tokens consumidos ({aiSuggestionState.provider === 'gemini' ? 'GEMINI' : aiSuggestionState.provider === 'openai' ? 'OPENAI' : aiSuggestionState.provider === 'groq' ? 'GROQ' : 'LLM'})
+                        </span>
+                      ) : (
+                        <span className="text-[10px] font-mono bg-[#eef8f0] text-[#1c6434] border border-[#a2d8b0] px-2 py-0.5 rounded flex items-center gap-1 font-semibold">
+                          <Zap className="h-2.5 w-2.5" />
+                          {aiSuggestionState.tokens_saved} tokens poupados (IA Offline)
                         </span>
                       )}
                     </div>
@@ -4212,7 +4213,16 @@ export default function App() {
                     {aiSuggestionState.text}
                   </div>
 
-                  {aiSuggestionState.provider === 'offline_heuristic' && (
+                  {aiSuggestionState.fallback_reason && (
+                    <div className="text-[11px] bg-[#fff8e6] border border-[#ecd292] text-[#845305] px-2.5 py-1.5 rounded flex items-start gap-1.5">
+                      <AlertCircle className="h-3.5 w-3.5 shrink-0 text-[#b45309] mt-0.5" />
+                      <div>
+                        <span className="font-bold">Aviso de Conexão com a IA:</span> Falha ao consultar modelo online ({aiSuggestionState.fallback_reason}). A sugestão foi gerada via heurística determinística local como alternativa imediata.
+                      </div>
+                    </div>
+                  )}
+
+                  {aiSuggestionState.provider === 'offline_heuristic' && !aiSuggestionState.fallback_reason && (
                     <div className="flex items-center justify-between text-[11px] bg-[#fff8e6] border border-[#ecd292] text-[#845305] px-2.5 py-1.5 rounded">
                       <div className="flex items-center gap-1.5">
                         <AlertCircle className="h-3.5 w-3.5 shrink-0 text-[#b45309]" />
@@ -4369,16 +4379,27 @@ export default function App() {
                     <CheckCircle2 className="h-4 w-4" />
                     Resultado da Fusão Sintética
                   </span>
-                  {fusedResult.tokens_saved > 0 ? (
-                    <span className="text-[10px] font-mono bg-[#eef8f0] text-[#1c6434] border border-[#a2d8b0] px-2 py-0.5 rounded font-bold">
-                      ⚡ {fusedResult.tokens_saved} tokens poupados
+                  {fusedResult.tokens_used > 0 ? (
+                    <span className="text-[10px] font-mono bg-[#fdf5eb] text-[#8b5a2b] border border-[#f0d4b8] px-2 py-0.5 rounded font-bold flex items-center gap-1">
+                      <Sparkles className="h-2.5 w-2.5" />
+                      {fusedResult.tokens_used} tokens consumidos ({fusedResult.provider?.toUpperCase()})
                     </span>
                   ) : (
-                    <span className="text-[10px] font-mono bg-[#fdf5eb] text-[#8b5a2b] border border-[#f0d4b8] px-2 py-0.5 rounded font-bold">
-                      ✨ {fusedResult.tokens_used} tokens consumidos
+                    <span className="text-[10px] font-mono bg-[#eef8f0] text-[#1c6434] border border-[#a2d8b0] px-2 py-0.5 rounded font-bold flex items-center gap-1">
+                      <Zap className="h-2.5 w-2.5" />
+                      {fusedResult.tokens_saved} tokens poupados (IA Offline)
                     </span>
                   )}
                 </div>
+
+                {fusedResult.fallback_reason && (
+                  <div className="text-[11px] bg-[#fff8e6] border border-[#ecd292] text-[#845305] px-2.5 py-1.5 rounded flex items-start gap-1.5">
+                    <AlertCircle className="h-3.5 w-3.5 shrink-0 text-[#b45309] mt-0.5" />
+                    <div>
+                      <span className="font-bold">Aviso de Conexão com a IA:</span> Falha ao consultar modelo online ({fusedResult.fallback_reason}). Fusão realizada via motor determinístico.
+                    </div>
+                  </div>
+                )}
 
                 <div className="space-y-2">
                   <div>

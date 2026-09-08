@@ -14,6 +14,7 @@ from curriculum_gen.models import (
 
 # In-memory deterministic cache to eliminate duplicate token consumption on re-runs
 _LLM_CACHE = {}
+_GEMINI_MODELS_CACHE = {}
 
 
 def _condense_job_context(job_desc: str, max_chars: int = 400) -> str:
@@ -199,18 +200,27 @@ class LLMOptimizer:
 
         # 1. Determine provider
         if provider:
-            self.provider = provider.lower()
+            p = str(provider).strip().lower()
+            if "gemini" in p or "google" in p:
+                self.provider = "gemini"
+            elif "groq" in p:
+                self.provider = "groq"
+            elif "openai" in p:
+                self.provider = "openai"
+            else:
+                self.provider = p
         elif self.api_key:
+            clean_k = str(self.api_key).strip()
             if (
-                self.api_key.startswith("AIza")
-                or self.api_key.startswith("AQ")
+                clean_k.startswith("AIza")
+                or clean_k.startswith("AQ")
                 or (model and "gemini" in model.lower())
                 or (os.getenv("GEMINI_API_KEY") and not os.getenv("OPENAI_API_KEY"))
             ):
                 self.provider = "gemini"
-            elif self.api_key.startswith("gsk_") or (model and ("llama" in model.lower() or "mixtral" in model.lower())):
+            elif clean_k.startswith("gsk_") or (model and ("llama" in model.lower() or "mixtral" in model.lower())):
                 self.provider = "groq"
-            elif self.api_key.startswith("sk-") or (model and "gpt" in model.lower()):
+            elif clean_k.startswith("sk-") or (model and "gpt" in model.lower()):
                 self.provider = "openai"
             else:
                 if model and any(g in model.lower() for g in ["gemini", "flash", "pro"]):
@@ -225,7 +235,7 @@ class LLMOptimizer:
             if not model or "gpt" in model:
                 self.model = "gemini-2.0-flash"
             else:
-                self.model = model
+                self.model = str(model).replace("models/", "").strip()
 
         elif self.provider == "groq":
             if not self.base_url:
@@ -384,6 +394,13 @@ INSTRUCTIONS & CRITICAL CONSTRAINTS:
     def _get_available_gemini_models(self) -> List[str]:
         if not self.api_key:
             return []
+        import time
+        now = time.time()
+        if self.api_key in _GEMINI_MODELS_CACHE:
+            ts, cached_models = _GEMINI_MODELS_CACHE[self.api_key]
+            if now - ts < 600:
+                return cached_models
+
         import httpx
         url = f"https://generativelanguage.googleapis.com/v1beta/models?key={self.api_key}"
         try:
@@ -393,17 +410,56 @@ INSTRUCTIONS & CRITICAL CONSTRAINTS:
                 models_list = data.get("models", [])
                 excluded = [
                     "tts", "image", "transcribe", "clip", "audio",
-                    "robotics", "computer-use", "banana", "customtools"
+                    "robotics", "computer-use", "banana", "customtools", "embedding", "imagen"
                 ]
-                return [
+                models = [
                     m["name"].replace("models/", "")
                     for m in models_list
                     if "generateContent" in m.get("supportedGenerationMethods", [])
                     and not any(ex in m["name"].lower() for ex in excluded)
                 ]
+                _GEMINI_MODELS_CACHE[self.api_key] = (now, models)
+                return models
         except Exception as e:
             print(f"[CurriculumGen Gemini ListModels Error] {e}")
         return []
+
+    def _get_gemini_model_candidates(self) -> List[str]:
+        available = self._get_available_gemini_models()
+        candidates: List[str] = []
+        if self.model:
+            clean_m = self.model.replace("models/", "").strip()
+            if clean_m:
+                candidates.append(clean_m)
+
+        pref_order = [
+            "gemini-2.5-flash-lite",
+            "gemini-2.5-flash",
+            "gemini-2.0-flash",
+            "gemini-2.0-flash-exp",
+            "gemini-1.5-flash",
+            "gemini-flash-lite-latest",
+            "gemini-flash-latest",
+            "gemini-1.5-flash-8b",
+            "gemini-2.0-pro-exp",
+            "gemini-1.5-pro",
+        ]
+        for p in pref_order:
+            for a in available:
+                if p == a or a.startswith(p):
+                    if a not in candidates:
+                        candidates.append(a)
+
+        for a in available:
+            if a not in candidates:
+                candidates.append(a)
+
+        if not candidates:
+            candidates = [self.model or "gemini-2.5-flash-lite", "gemini-2.0-flash", "gemini-1.5-flash"]
+
+        seen = set()
+        models_to_try = [m for m in candidates if m and not (m in seen or seen.add(m))]
+        return models_to_try
 
     def _call_gemini_native(self, user_prompt: str, target_lang: str) -> Optional[List[str]]:
         import httpx
@@ -411,40 +467,7 @@ INSTRUCTIONS & CRITICAL CONSTRAINTS:
             system_content = SYSTEM_PROMPT.replace("{language}", target_lang)
 
             # Discover active text models from Google AI Studio for this specific key
-            available = self._get_available_gemini_models()
-            print(f"[CurriculumGen Gemini] Modelos texto ativos detectados: {available}")
-
-            candidates: List[str] = []
-            if self.model and (not available or self.model in available):
-                candidates.append(self.model)
-
-            pref_order = [
-                "gemini-2.5-flash-lite",
-                "gemini-2.5-flash",
-                "gemini-2.0-flash",
-                "gemini-2.0-flash-exp",
-                "gemini-1.5-flash",
-                "gemini-flash-lite-latest",
-                "gemini-flash-latest",
-                "gemini-1.5-flash-8b",
-                "gemini-2.0-pro-exp",
-                "gemini-1.5-pro",
-            ]
-            for p in pref_order:
-                for a in available:
-                    if p == a or a.startswith(p):
-                        if a not in candidates:
-                            candidates.append(a)
-
-            for a in available:
-                if a not in candidates:
-                    candidates.append(a)
-
-            if not candidates:
-                candidates = [self.model or "gemini-2.5-flash-lite", "gemini-2.0-flash", "gemini-1.5-flash"]
-
-            seen = set()
-            models_to_try = [m for m in candidates if m and not (m in seen or seen.add(m))]
+            models_to_try = self._get_gemini_model_candidates()
             print(f"[CurriculumGen Gemini] Modelos a testar na ordem: {models_to_try}")
 
             for m in models_to_try:
@@ -802,17 +825,17 @@ INSTRUCTIONS & CRITICAL CONSTRAINTS:
                 + "- If related profile projects exist (e.g. AtesN-DS with eBPF/XDP, 51% latency reduction, 213% throughput gain): seamlessly incorporate these concrete technical achievements and metrics.\n"
                 + "- If award or certification: write 1-2 robust, complete sentences stating what was presented or achieved, the underlying technical project/system, and its measurable merit or distinction.\n"
                 + "- If project or experience: write 1-3 strong action bullets using the XYZ impact formula (Action verb + Technical scope + Measurable outcome).\n"
-                + "- Output ONLY the resulting description text in {target_lang}. No markdown headers, no conversational intro, no quotes."
+                + f"- Output ONLY the resulting description text in {target_lang}. No markdown headers, no conversational intro, no quotes."
             )
 
             # Try native gemini
             if self.provider == "gemini" and self.api_key:
-                try:
-                    import httpx
-                    available = self._get_available_gemini_models()
-                    chosen_model = self.model or (available[0] if available else "gemini-2.0-flash")
-                    clean_model = chosen_model.replace("models/", "")
-                    url = f"https://generativelanguage.googleapis.com/v1beta/models/{clean_model}:generateContent?key={self.api_key}"
+                import httpx
+                models_to_try = self._get_gemini_model_candidates()
+                print(f"[LLMOptimizer] generate_description Gemini modelos a testar: {models_to_try}")
+                for m in models_to_try:
+                    clean_m = m.replace("models/", "").strip()
+                    url = f"https://generativelanguage.googleapis.com/v1beta/models/{clean_m}:generateContent?key={self.api_key}"
                     payload = {
                         "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
                         "generationConfig": {
@@ -820,34 +843,48 @@ INSTRUCTIONS & CRITICAL CONSTRAINTS:
                             "maxOutputTokens": 384,
                         },
                     }
-                    res = httpx.post(url, json=payload, timeout=20.0)
-                    if res.status_code == 200:
-                        data = res.json()
-                        candidates = data.get("candidates", [])
-                        if candidates:
-                            parts = candidates[0].get("content", {}).get("parts", [])
-                            if parts:
-                                txt = parts[0].get("text", "").strip()
-                                if txt:
-                                    used = (len(user_prompt) // 4) + (len(txt) // 4)
-                                    saved = 180  # Distillation & context focus savings
-                                    self.calls_succeeded += 1
-                                    self.tokens_used += used
-                                    cleaned_txt = txt.strip('"\'')
-                                    return {
-                                        "text": cleaned_txt,
-                                        "suggestion": cleaned_txt,
-                                        "tokens_used": used,
-                                        "tokens_saved": saved,
-                                        "provider": "gemini",
-                                        "strategy": "Otimização LLM com Contexto de Perfil",
-                                        "cross_refs": cross_refs,
-                                    }
-                except Exception as e:
-                    print(f"[LLMOptimizer] generate_description Gemini failed: {e}")
+                    try:
+                        res = httpx.post(url, json=payload, timeout=25.0)
+                        if res.status_code == 200:
+                            data = res.json()
+                            candidates = data.get("candidates", [])
+                            if candidates:
+                                parts = candidates[0].get("content", {}).get("parts", [])
+                                if parts:
+                                    txt = parts[0].get("text", "").strip()
+                                    if txt:
+                                        usage = data.get("usageMetadata", {})
+                                        if usage and "totalTokenCount" in usage:
+                                            used = usage.get("totalTokenCount", 0)
+                                        else:
+                                            used = (len(user_prompt) // 4) + (len(txt) // 4)
+                                        self.calls_succeeded += 1
+                                        self.tokens_used += used
+                                        self.model = clean_m
+                                        cleaned_txt = txt.strip('"\'')
+                                        print(f"[LLMOptimizer] generate_description Gemini sucesso com '{clean_m}' ({used} tokens)")
+                                        return {
+                                            "text": cleaned_txt,
+                                            "suggestion": cleaned_txt,
+                                            "tokens_used": used,
+                                            "tokens_saved": 0,
+                                            "provider": "gemini",
+                                            "strategy": f"Otimização LLM ({clean_m})",
+                                            "cross_refs": cross_refs,
+                                        }
+                        else:
+                            err_data = res.json().get("error", {}) if res.headers.get("content-type", "").startswith("application/json") else {}
+                            err_msg = err_data.get("message", res.text[:200])
+                            print(f"[LLMOptimizer] Gemini candidate '{clean_m}' falhou ({res.status_code}): {err_msg}")
+                            self.last_error = f"Gemini ({clean_m}, HTTP {res.status_code}): {err_msg}"
+                            if res.status_code == 400 and ("API key not valid" in err_msg or "API_KEY_INVALID" in err_msg):
+                                break
+                    except Exception as e:
+                        print(f"[LLMOptimizer] generate_description Gemini erro com '{clean_m}': {e}")
+                        self.last_error = f"Gemini ({clean_m}) erro de conexão: {str(e)}"
 
-            # Try OpenAI client
-            if self.client:
+            # Try OpenAI / Groq client
+            elif self.provider in ["openai", "groq"] and self.client:
                 try:
                     response = self.client.chat.completions.create(
                         model=self.model,
@@ -861,7 +898,6 @@ INSTRUCTIONS & CRITICAL CONSTRAINTS:
                     txt = response.choices[0].message.content.strip()
                     if txt:
                         used = response.usage.total_tokens if hasattr(response, "usage") and response.usage else ((len(user_prompt) // 4) + (len(txt) // 4))
-                        saved = 180
                         self.calls_succeeded += 1
                         self.tokens_used += used
                         cleaned_txt = txt.strip('"\'')
@@ -869,13 +905,14 @@ INSTRUCTIONS & CRITICAL CONSTRAINTS:
                             "text": cleaned_txt,
                             "suggestion": cleaned_txt,
                             "tokens_used": used,
-                            "tokens_saved": saved,
-                            "provider": "openai",
-                            "strategy": "Otimização LLM com Contexto de Perfil",
+                            "tokens_saved": 0,
+                            "provider": self.provider,
+                            "strategy": f"Otimização LLM ({self.model})",
                             "cross_refs": cross_refs,
                         }
                 except Exception as e:
-                    print(f"[LLMOptimizer] generate_description OpenAI failed: {e}")
+                    print(f"[LLMOptimizer] generate_description {self.provider} failed: {e}")
+                    self.last_error = f"{self.provider} ({self.model}) falhou: {str(e)}"
 
         # 2. Contextual heuristic baseline (0 tokens used, ~320 tokens saved)
         import random
@@ -1055,6 +1092,7 @@ INSTRUCTIONS & CRITICAL CONSTRAINTS:
             "provider": "offline_heuristic",
             "strategy": "Síntese Determinística Offline (Zero Tokens)",
             "cross_refs": cross_refs,
+            "fallback_reason": self.last_error if self.api_key else None,
         }
 
     def generate_fusion(
@@ -1118,12 +1156,12 @@ INSTRUCTIONS & CRITICAL CONSTRAINTS:
 
             # Gemini
             if self.provider == "gemini" and self.api_key:
-                try:
-                    import httpx
-                    available = self._get_available_gemini_models()
-                    chosen_model = self.model or (available[0] if available else "gemini-2.0-flash")
-                    clean_model = chosen_model.replace("models/", "")
-                    url = f"https://generativelanguage.googleapis.com/v1beta/models/{clean_model}:generateContent?key={self.api_key}"
+                import httpx
+                models_to_try = self._get_gemini_model_candidates()
+                print(f"[LLMOptimizer] generate_fusion Gemini modelos a testar: {models_to_try}")
+                for m in models_to_try:
+                    clean_m = m.replace("models/", "").strip()
+                    url = f"https://generativelanguage.googleapis.com/v1beta/models/{clean_m}:generateContent?key={self.api_key}"
                     payload = {
                         "contents": [{"role": "user", "parts": [{"text": prompt}]}],
                         "generationConfig": {
@@ -1132,27 +1170,39 @@ INSTRUCTIONS & CRITICAL CONSTRAINTS:
                             "maxOutputTokens": 384,
                         },
                     }
-                    res = httpx.post(url, json=payload, timeout=20.0)
-                    if res.status_code == 200:
-                        candidates = res.json().get("candidates", [])
-                        if candidates:
-                            raw_json = candidates[0].get("content", {}).get("parts", [])[0].get("text", "")
-                            parsed = json.loads(raw_json)
-                            used = (len(prompt) // 4) + (len(raw_json) // 4)
-                            self.calls_succeeded += 1
-                            self.tokens_used += used
-                            return {
-                                "fused_item": parsed,
-                                "tokens_used": used,
-                                "tokens_saved": 240,
-                                "provider": "gemini",
-                                "strategy": "Fusão Sintética LLM de Conquistas",
-                            }
-                except Exception as e:
-                    print(f"[LLMOptimizer] generate_fusion Gemini failed: {e}")
+                    try:
+                        res = httpx.post(url, json=payload, timeout=25.0)
+                        if res.status_code == 200:
+                            candidates = res.json().get("candidates", [])
+                            if candidates:
+                                raw_json = candidates[0].get("content", {}).get("parts", [])[0].get("text", "")
+                                clean_json_str = raw_json.replace("```json", "").replace("```", "").strip()
+                                parsed = json.loads(clean_json_str)
+                                self.model = clean_m
+                                used = (len(prompt) // 4) + (len(clean_json_str) // 4)
+                                self.calls_succeeded += 1
+                                self.tokens_used += used
+                                print(f"[LLMOptimizer] generate_fusion Gemini sucesso via '{clean_m}' ({used} tokens)")
+                                return {
+                                    "fused_item": parsed,
+                                    "tokens_used": used,
+                                    "tokens_saved": 0,
+                                    "provider": "gemini",
+                                    "strategy": f"Fusão Sintética LLM ({clean_m})",
+                                }
+                        else:
+                            err_data = res.json().get("error", {}) if res.headers.get("content-type", "").startswith("application/json") else {}
+                            err_msg = err_data.get("message", res.text[:200])
+                            print(f"[LLMOptimizer] generate_fusion Gemini candidate '{clean_m}' falhou ({res.status_code}): {err_msg}")
+                            self.last_error = f"Gemini ({clean_m}, HTTP {res.status_code}): {err_msg}"
+                            if res.status_code == 400 and ("API key not valid" in err_msg or "API_KEY_INVALID" in err_msg):
+                                break
+                    except Exception as e:
+                        print(f"[LLMOptimizer] generate_fusion Gemini erro '{clean_m}': {e}")
+                        self.last_error = f"Gemini ({clean_m}) erro de conexão: {str(e)}"
 
-            # OpenAI
-            if self.client:
+            # OpenAI / Groq
+            elif self.provider in ["openai", "groq"] and self.client:
                 try:
                     response = self.client.chat.completions.create(
                         model=self.model,
@@ -1171,12 +1221,13 @@ INSTRUCTIONS & CRITICAL CONSTRAINTS:
                     return {
                         "fused_item": parsed,
                         "tokens_used": used,
-                        "tokens_saved": 240,
-                        "provider": "openai",
-                        "strategy": "Fusão Sintética LLM de Conquistas",
+                        "tokens_saved": 0,
+                        "provider": self.provider,
+                        "strategy": f"Fusão Sintética LLM ({self.model})",
                     }
                 except Exception as e:
-                    print(f"[LLMOptimizer] generate_fusion OpenAI failed: {e}")
+                    print(f"[LLMOptimizer] generate_fusion {self.provider} failed: {e}")
+                    self.last_error = f"{self.provider} ({self.model}) falhou: {str(e)}"
 
         # 2. Contextual heuristic fusion baseline (0 tokens used, 350 tokens saved)
         comb_lower = combined_text.lower()
@@ -1223,6 +1274,7 @@ INSTRUCTIONS & CRITICAL CONSTRAINTS:
             "tokens_saved": 350,
             "provider": "offline_heuristic",
             "strategy": "Fusão Sintética Determinística (Zero Tokens)",
+            "fallback_reason": self.last_error if self.api_key else None,
         }
 
 

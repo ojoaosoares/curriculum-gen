@@ -313,3 +313,100 @@ def test_suggest_description_endpoint():
     assert "atesn" in fused_item["title"].lower() or "sbesc" in fused_item["title"].lower()
     assert "relevância" in fused_item["description"].lower() or "sbesc" in fused_item["description"].lower()
     assert fusion_data["tokens_saved"] > 0
+
+
+def test_gemini_candidate_fallback_and_error_reporting(monkeypatch):
+    from fastapi.testclient import TestClient
+    from curriculum_gen.server.app import app
+    import httpx
+
+    client = TestClient(app)
+
+    # 1. Test fallback to second model when first candidate returns 404
+    call_counts = {"count": 0}
+
+    def mock_post(url, json=None, timeout=None):
+        call_counts["count"] += 1
+        if "gemini-2.0-flash" in url:
+            # Simulate 404 for 2.0-flash
+            return httpx.Response(
+                404,
+                json={"error": {"message": "models/gemini-2.0-flash is not found", "code": 404}},
+                request=httpx.Request("POST", url),
+            )
+        # Next candidate succeeds
+        return httpx.Response(
+            200,
+            json={
+                "candidates": [
+                    {
+                        "content": {
+                            "parts": [
+                                {"text": "Apresentação de artigo sobre o AtesN-DS com redução de 51% de latência."}
+                            ]
+                        }
+                    }
+                ],
+                "usageMetadata": {"totalTokenCount": 215},
+            },
+            request=httpx.Request("POST", url),
+        )
+
+    def mock_get(url, timeout=None):
+        return httpx.Response(
+            200,
+            json={
+                "models": [
+                    {"name": "models/gemini-2.0-flash", "supportedGenerationMethods": ["generateContent"]},
+                    {"name": "models/gemini-2.5-flash", "supportedGenerationMethods": ["generateContent"]},
+                ]
+            },
+            request=httpx.Request("GET", url),
+        )
+
+    monkeypatch.setattr(httpx, "post", mock_post)
+    monkeypatch.setattr(httpx, "get", mock_get)
+
+    res_fallback = client.post(
+        "/api/suggest-description",
+        json={
+            "item_type": "award",
+            "title": "Apresentação SBESC",
+            "subtitle_or_org": "SBESC 2025",
+            "api_key": "AIzaSyMockTestKey",
+            "provider": "gemini",
+            "model": "gemini-2.0-flash",
+        },
+    )
+    assert res_fallback.status_code == 200
+    data_fallback = res_fallback.json()
+    assert data_fallback["provider"] == "gemini"
+    assert data_fallback["tokens_used"] == 215
+    assert "AtesN-DS" in data_fallback["suggestion"]
+    assert call_counts["count"] >= 2
+
+    # 2. Test fallback_reason when all candidate models fail (e.g. quota 429)
+    def mock_post_fail(url, json=None, timeout=None):
+        return httpx.Response(
+            429,
+            json={"error": {"message": "Resource has been exhausted (e.g. check quota)", "code": 429}},
+            request=httpx.Request("POST", url),
+        )
+
+    monkeypatch.setattr(httpx, "post", mock_post_fail)
+
+    res_error = client.post(
+        "/api/suggest-description",
+        json={
+            "item_type": "award",
+            "title": "Apresentação SBESC",
+            "subtitle_or_org": "SBESC 2025",
+            "api_key": "AIzaSyMockTestKey",
+            "provider": "gemini",
+        },
+    )
+    assert res_error.status_code == 200
+    data_error = res_error.json()
+    assert data_error["provider"] == "offline_heuristic"
+    assert data_error["fallback_reason"] is not None
+    assert "429" in data_error["fallback_reason"]

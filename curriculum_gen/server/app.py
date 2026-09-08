@@ -331,6 +331,7 @@ def suggest_description(req: SuggestDescriptionRequest):
     provider_used = result.get("provider", "offline_heuristic") if isinstance(result, dict) else "offline_heuristic"
     strategy_used = result.get("strategy", "Síntese Contextual de Perfil") if isinstance(result, dict) else "Síntese Determinística"
     cross_refs = result.get("cross_refs", []) if isinstance(result, dict) else []
+    fallback_reason = result.get("fallback_reason") if isinstance(result, dict) else None
 
     # Record operation in token tracker so metrics and history are accurate
     token_tracker.record_operation(
@@ -351,6 +352,7 @@ def suggest_description(req: SuggestDescriptionRequest):
         "strategy": strategy_used,
         "provider": provider_used,
         "cross_refs": cross_refs,
+        "fallback_reason": fallback_reason,
     }
 
 
@@ -386,6 +388,7 @@ def suggest_fusion(req: SuggestFusionRequest):
     tokens_saved = result.get("tokens_saved", 350 if tokens_used == 0 else 0)
     provider_used = result.get("provider", "offline_heuristic")
     strategy_used = result.get("strategy", "Fusão Sintética de Conquistas Relacionadas")
+    fallback_reason = result.get("fallback_reason")
 
     token_tracker.record_operation(
         operation="Fusão de Conquistas com IA",
@@ -403,6 +406,7 @@ def suggest_fusion(req: SuggestFusionRequest):
         "tokens_saved": tokens_saved,
         "strategy": strategy_used,
         "provider": provider_used,
+        "fallback_reason": fallback_reason,
     }
 
 
