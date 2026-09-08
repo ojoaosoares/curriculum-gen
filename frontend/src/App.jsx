@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   FileText,
   Sparkles,
@@ -30,6 +30,7 @@ import {
   AlertTriangle,
   Edit3,
   GitMerge,
+  Tag,
 } from 'lucide-react';
 
 const extractErrorMessage = (errData, defaultMsg = 'Ocorreu um erro na operação.') => {
@@ -171,6 +172,13 @@ export default function App() {
   const [editingItem, setEditingItem] = useState(null);
   const [isSuggesting, setIsSuggesting] = useState(false);
   const [aiSuggestionState, setAiSuggestionState] = useState(null);
+
+  // Skill Management & Association State
+  const [newSkillInput, setNewSkillInput] = useState('');
+  const [activeSkillDetail, setActiveSkillDetail] = useState(null);
+  const [newCategorySkillInputs, setNewCategorySkillInputs] = useState({});
+  const [showAddCategory, setShowAddCategory] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState('');
 
   // Awards Fusion Modal State
   const [fusionModalOpen, setFusionModalOpen] = useState(false);
@@ -392,29 +400,31 @@ export default function App() {
 
   const handleOpenAdd = (type) => {
     setAiSuggestionState(null);
+    setNewSkillInput('');
     if (type === 'experience') {
       setEditingItem({
         type,
         index: null,
-        form: { role: '', company: '', period: '', location: '', tags: '', raw_bullets: '' },
+        form: { role: '', company: '', period: '', location: '', tags: [], raw_bullets: '' },
       });
     } else if (type === 'project') {
       setEditingItem({
         type,
         index: null,
-        form: { title: '', subtitle: '', period: '', tags: '', raw_bullets: '' },
+        form: { title: '', subtitle: '', period: '', tags: [], raw_bullets: '' },
       });
     } else if (type === 'award') {
       setEditingItem({
         type,
         index: null,
-        form: { title: '', period_or_date: '', description: '' },
+        form: { title: '', period_or_date: '', description: '', tags: [] },
       });
     }
   };
 
   const handleOpenEdit = (type, index, item) => {
     setAiSuggestionState(null);
+    setNewSkillInput('');
     if (type === 'personal') {
       setEditingItem({
         type,
@@ -430,6 +440,11 @@ export default function App() {
         },
       });
     } else if (type === 'experience') {
+      const currentTags = Array.isArray(item.tags)
+        ? [...item.tags]
+        : (typeof item.tags === 'string' && item.tags
+            ? item.tags.split(',').map((t) => t.trim()).filter(Boolean)
+            : []);
       setEditingItem({
         type,
         index,
@@ -438,11 +453,16 @@ export default function App() {
           company: item.company || '',
           period: item.period || '',
           location: item.location || '',
-          tags: (item.tags || []).join(', '),
+          tags: currentTags,
           raw_bullets: (item.raw_bullets || []).join('\n'),
         },
       });
     } else if (type === 'project') {
+      const currentTags = Array.isArray(item.tags)
+        ? [...item.tags]
+        : (typeof item.tags === 'string' && item.tags
+            ? item.tags.split(',').map((t) => t.trim()).filter(Boolean)
+            : []);
       setEditingItem({
         type,
         index,
@@ -450,11 +470,16 @@ export default function App() {
           title: item.title || '',
           subtitle: item.subtitle || '',
           period: item.period || '',
-          tags: (item.tags || []).join(', '),
+          tags: currentTags,
           raw_bullets: (item.raw_bullets || []).join('\n'),
         },
       });
     } else if (type === 'award') {
+      const currentTags = Array.isArray(item.tags)
+        ? [...item.tags]
+        : (typeof item.tags === 'string' && item.tags
+            ? item.tags.split(',').map((t) => t.trim()).filter(Boolean)
+            : []);
       setEditingItem({
         type,
         index,
@@ -462,8 +487,210 @@ export default function App() {
           title: item.title || '',
           period_or_date: item.period_or_date || '',
           description: item.description || '',
+          tags: currentTags,
         },
       });
+    }
+  };
+
+  const allProfileSkills = useMemo(() => {
+    if (!profile?.skills) return [];
+    const set = new Set();
+    Object.values(profile.skills).forEach((items) => {
+      const arr = Array.isArray(items) ? items : [items];
+      arr.forEach((s) => {
+        if (typeof s === 'string' && s.trim()) set.add(s.trim());
+      });
+    });
+    return Array.from(set).sort();
+  }, [profile?.skills]);
+
+  const getSkillAssociations = useMemo(() => {
+    if (!profile) return () => ({ experiences: [], projects: [], awards: [], total: 0 });
+    return (skillName) => {
+      if (!skillName) return { experiences: [], projects: [], awards: [], total: 0 };
+      const q = skillName.trim().toLowerCase();
+      const exps = (profile.experiences || []).filter((e) =>
+        (e.tags || []).some((t) => t.toLowerCase() === q)
+      );
+      const projs = (profile.projects || []).filter((p) =>
+        (p.tags || []).some((t) => t.toLowerCase() === q)
+      );
+      const awards = (profile.awards_and_leadership || []).filter((a) =>
+        (a.tags || []).some((t) => t.toLowerCase() === q)
+      );
+      return {
+        experiences: exps,
+        projects: projs,
+        awards: awards,
+        total: exps.length + projs.length + awards.length,
+      };
+    };
+  }, [profile]);
+
+  const handleAddTagToEditingItem = (tag) => {
+    if (!tag || !editingItem) return;
+    const clean = tag.trim();
+    if (!clean) return;
+    const currentTags = Array.isArray(editingItem.form.tags)
+      ? editingItem.form.tags
+      : (typeof editingItem.form.tags === 'string' && editingItem.form.tags
+          ? editingItem.form.tags.split(',').map((t) => t.trim()).filter(Boolean)
+          : []);
+    if (!currentTags.some((t) => t.toLowerCase() === clean.toLowerCase())) {
+      setEditingItem({
+        ...editingItem,
+        form: {
+          ...editingItem.form,
+          tags: [...currentTags, clean],
+        },
+      });
+    }
+    setNewSkillInput('');
+  };
+
+  const handleRemoveTagFromEditingItem = (tagToRemove) => {
+    if (!editingItem) return;
+    const currentTags = Array.isArray(editingItem.form.tags)
+      ? editingItem.form.tags
+      : (typeof editingItem.form.tags === 'string' && editingItem.form.tags
+          ? editingItem.form.tags.split(',').map((t) => t.trim()).filter(Boolean)
+          : []);
+    setEditingItem({
+      ...editingItem,
+      form: {
+        ...editingItem.form,
+        tags: currentTags.filter((t) => t.toLowerCase() !== tagToRemove.toLowerCase()),
+      },
+    });
+  };
+
+  const handleToggleTagInEditingItem = (tag) => {
+    if (!editingItem) return;
+    const currentTags = Array.isArray(editingItem.form.tags)
+      ? editingItem.form.tags
+      : (typeof editingItem.form.tags === 'string' && editingItem.form.tags
+          ? editingItem.form.tags.split(',').map((t) => t.trim()).filter(Boolean)
+          : []);
+    if (currentTags.some((t) => t.toLowerCase() === tag.toLowerCase())) {
+      handleRemoveTagFromEditingItem(tag);
+    } else {
+      handleAddTagToEditingItem(tag);
+    }
+  };
+
+  const handleAutoDetectSkills = () => {
+    if (!editingItem) return;
+    const f = editingItem.form;
+    let fullText = '';
+    if (editingItem.type === 'experience') {
+      fullText = `${f.role || ''} ${f.company || ''} ${f.raw_bullets || ''}`;
+    } else if (editingItem.type === 'project') {
+      fullText = `${f.title || ''} ${f.subtitle || ''} ${f.raw_bullets || ''}`;
+    } else if (editingItem.type === 'award') {
+      fullText = `${f.title || ''} ${f.period_or_date || ''} ${f.description || ''}`;
+    }
+    const lower = fullText.toLowerCase();
+
+    const detected = new Set();
+    allProfileSkills.forEach((sk) => {
+      const escaped = sk.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const regex = new RegExp(`(^|[^a-zA-Z0-9_#+])${escaped}([^a-zA-Z0-9_#+]|$)`, 'i');
+      if (regex.test(lower)) {
+        detected.add(sk);
+      }
+    });
+
+    const commonTechs = [
+      'Python', 'C', 'C++', 'Rust', 'Go', 'JavaScript', 'TypeScript', 'eBPF', 'XDP',
+      'Linux', 'Kernel', 'Docker', 'Kubernetes', 'FastAPI', 'React', 'NestJS', 'PostgreSQL',
+      'MySQL', 'Redis', 'DNS', 'ns-3', 'GPU', 'CUDA', 'Git', 'CI/CD', 'Playwright',
+      'Redes', 'Sistemas Embarcados'
+    ];
+    commonTechs.forEach((tech) => {
+      const escaped = tech.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const regex = new RegExp(`(^|[^a-zA-Z0-9_#+])${escaped}([^a-zA-Z0-9_#+]|$)`, 'i');
+      if (regex.test(lower)) {
+        detected.add(tech);
+      }
+    });
+
+    const currentTags = Array.isArray(f.tags)
+      ? f.tags
+      : (typeof f.tags === 'string' && f.tags
+          ? f.tags.split(',').map((t) => t.trim()).filter(Boolean)
+          : []);
+
+    const merged = [...currentTags];
+    detected.forEach((d) => {
+      if (!merged.some((m) => m.toLowerCase() === d.toLowerCase())) {
+        merged.push(d);
+      }
+    });
+
+    setEditingItem({
+      ...editingItem,
+      form: {
+        ...editingItem.form,
+        tags: merged,
+      },
+    });
+  };
+
+  const handleAddSkillToCategory = async (category, skillName) => {
+    if (!profile || !skillName || !skillName.trim()) return;
+    const clean = skillName.trim();
+    const updatedSkills = { ...(profile.skills || {}) };
+    const currentList = Array.isArray(updatedSkills[category]) ? [...updatedSkills[category]] : [];
+    if (!currentList.some((s) => s.toLowerCase() === clean.toLowerCase())) {
+      currentList.push(clean);
+      updatedSkills[category] = currentList;
+      const updatedProfile = { ...profile, skills: updatedSkills };
+      setProfile(updatedProfile);
+      setNewCategorySkillInputs((prev) => ({ ...prev, [category]: '' }));
+      try {
+        await persistProfile(updatedProfile);
+      } catch (err) {
+        console.error('Erro ao adicionar habilidade:', err);
+      }
+    }
+  };
+
+  const handleRemoveSkillFromCategory = async (category, skillToRemove) => {
+    if (!profile) return;
+    const updatedSkills = { ...(profile.skills || {}) };
+    if (!updatedSkills[category]) return;
+    const currentList = Array.isArray(updatedSkills[category]) ? updatedSkills[category] : [];
+    updatedSkills[category] = currentList.filter(
+      (s) => s.toLowerCase() !== skillToRemove.toLowerCase()
+    );
+    if (updatedSkills[category].length === 0) {
+      delete updatedSkills[category];
+    }
+    const updatedProfile = { ...profile, skills: updatedSkills };
+    setProfile(updatedProfile);
+    try {
+      await persistProfile(updatedProfile);
+    } catch (err) {
+      console.error('Erro ao remover habilidade:', err);
+    }
+  };
+
+  const handleCreateCategory = async (categoryName) => {
+    if (!profile || !categoryName || !categoryName.trim()) return;
+    const cleanCat = categoryName.trim();
+    const updatedSkills = { ...(profile.skills || {}) };
+    if (!updatedSkills[cleanCat]) {
+      updatedSkills[cleanCat] = [];
+      const updatedProfile = { ...profile, skills: updatedSkills };
+      setProfile(updatedProfile);
+      setShowAddCategory(false);
+      setNewCategoryName('');
+      try {
+        await persistProfile(updatedProfile);
+      } catch (err) {
+        console.error('Erro ao criar categoria:', err);
+      }
     }
   };
 
@@ -678,6 +905,12 @@ export default function App() {
 
     let updated = { ...profile };
 
+    const cleanTags = Array.isArray(form.tags)
+      ? form.tags.map((t) => t.trim()).filter(Boolean)
+      : (typeof form.tags === 'string' && form.tags
+          ? form.tags.split(',').map((t) => t.trim()).filter(Boolean)
+          : []);
+
     if (type === 'personal') {
       updated = {
         ...profile,
@@ -699,7 +932,7 @@ export default function App() {
         company: form.company?.trim() || 'Empresa',
         period: form.period?.trim() || '',
         location: form.location?.trim() || null,
-        tags: form.tags ? form.tags.split(',').map((t) => t.trim()).filter(Boolean) : [],
+        tags: cleanTags,
         raw_bullets: form.raw_bullets ? form.raw_bullets.split('\n').map((b) => b.trim()).filter(Boolean) : [],
         formatted_bullets: [],
         metrics: [],
@@ -718,7 +951,7 @@ export default function App() {
         title: form.title?.trim() || 'Projeto',
         subtitle: form.subtitle?.trim() || null,
         period: form.period?.trim() || null,
-        tags: form.tags ? form.tags.split(',').map((t) => t.trim()).filter(Boolean) : [],
+        tags: cleanTags,
         raw_bullets: form.raw_bullets ? form.raw_bullets.split('\n').map((b) => b.trim()).filter(Boolean) : [],
         formatted_bullets: [],
         metrics: [],
@@ -737,6 +970,7 @@ export default function App() {
         title: form.title?.trim() || 'Conquista',
         period_or_date: form.period_or_date?.trim() || 'N/A',
         description: form.description?.trim() || '',
+        tags: cleanTags,
         score: index !== null ? (profile.awards_and_leadership[index]?.score || 0.0) : 0.0,
       };
       let aws = [...(profile.awards_and_leadership || [])];
@@ -746,6 +980,27 @@ export default function App() {
         aws = [aw, ...aws];
       }
       updated.awards_and_leadership = aws;
+    }
+
+    // Auto-sync newly added tags to profile.skills
+    if (cleanTags.length > 0) {
+      const currentSkills = { ...(updated.skills || {}) };
+      const currentRegistered = new Set();
+      Object.values(currentSkills).forEach((items) => {
+        const arr = Array.isArray(items) ? items : [items];
+        arr.forEach((s) => currentRegistered.add(s.toLowerCase()));
+      });
+
+      const newSkillsToRegister = cleanTags.filter(
+        (t) => !currentRegistered.has(t.toLowerCase())
+      );
+      if (newSkillsToRegister.length > 0) {
+        const targetCat = currentSkills['Tecnologias']
+          ? 'Tecnologias'
+          : (Object.keys(currentSkills)[0] || 'Tecnologias');
+        currentSkills[targetCat] = [...(currentSkills[targetCat] || []), ...newSkillsToRegister];
+        updated.skills = currentSkills;
+      }
     }
 
     setProfile(updated);
@@ -1699,6 +1954,15 @@ export default function App() {
                                   <span className="font-mono">Sem descrição detalhada</span>
                                 </div>
                               )}
+                              {aw.tags && aw.tags.length > 0 && (
+                                <div className="text-[11px] text-[#8c7f70] pt-1 flex flex-wrap gap-1">
+                                  {aw.tags.map((t, ti) => (
+                                    <span key={ti} className="bg-[#f0e9dc] text-[#4d4235] px-2 py-0.5 rounded text-[10px]">
+                                      {t}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
                             </div>
                             <div className="flex items-center gap-1 shrink-0 ml-2">
                               <span className="text-[#756758] font-normal text-[11px] mr-1">{aw.period_or_date}</span>
@@ -1730,29 +1994,214 @@ export default function App() {
 
                 {/* Skills Section */}
                 <div className="space-y-2">
-                  <h4 className="text-xs font-sans font-bold text-[#5e5142] uppercase tracking-wider">
-                    Competências Registradas por Categoria
-                  </h4>
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-sans font-bold text-[#5e5142] uppercase tracking-wider">
+                      Competências Registradas por Categoria
+                    </h4>
+                    <button
+                      type="button"
+                      onClick={() => setShowAddCategory(!showAddCategory)}
+                      className="text-xs font-sans font-medium text-[#206634] hover:text-[#144221] bg-[#eef8f0] border border-[#a2d8b0] px-2.5 py-0.5 rounded flex items-center gap-1 transition"
+                    >
+                      <Plus className="h-3 w-3" />
+                      <span>Nova Categoria</span>
+                    </button>
+                  </div>
+
+                  {showAddCategory && (
+                    <div className="flex items-center gap-2 p-2 bg-[#f9f5ee] border border-[#d8ccb4] rounded-md">
+                      <input
+                        type="text"
+                        placeholder="Nome da categoria (ex: Cloud & DevOps, Ferramentas)..."
+                        value={newCategoryName}
+                        onChange={(e) => setNewCategoryName(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            handleCreateCategory(newCategoryName);
+                          }
+                        }}
+                        className="bg-white border border-[#cfc3a9] rounded px-2.5 py-1 text-xs text-[#2c2620] flex-1 placeholder:text-[#9e907e]"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => handleCreateCategory(newCategoryName)}
+                        disabled={!newCategoryName.trim()}
+                        className="px-3 py-1 bg-[#206634] hover:bg-[#164b25] text-white rounded text-xs font-semibold disabled:opacity-40 transition"
+                      >
+                        Criar
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowAddCategory(false);
+                          setNewCategoryName('');
+                        }}
+                        className="p-1 text-[#756758] hover:text-[#2c2620] rounded"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  )}
+
                   {profile.skills && Object.keys(profile.skills).length > 0 ? (
                     <div className="space-y-2">
                       {Object.entries(profile.skills).map(([category, items], idx) => (
-                        <div key={idx} className="p-3 rounded border border-[#dfd5be] bg-[#fffdfa] text-xs space-y-1.5">
-                          <span className="font-bold text-[#3d3327] uppercase text-[11px] tracking-wider block">
-                            {category}
-                          </span>
-                          <div className="flex flex-wrap gap-1">
-                            {(Array.isArray(items) ? items : [items]).map((sk, i) => (
-                              <span key={i} className="bg-[#f0e9dc] text-[#4d4235] px-2 py-0.5 rounded text-[11px]">
-                                {sk}
-                              </span>
-                            ))}
+                        <div key={idx} className="p-3 rounded border border-[#dfd5be] bg-[#fffdfa] text-xs space-y-2">
+                          <div className="flex items-center justify-between">
+                            <span className="font-bold text-[#3d3327] uppercase text-[11px] tracking-wider block">
+                              {category} ({(Array.isArray(items) ? items : [items]).length})
+                            </span>
+                          </div>
+                          <div className="flex flex-wrap gap-1.5">
+                            {(Array.isArray(items) ? items : [items]).map((sk, i) => {
+                              const assoc = getSkillAssociations(sk);
+                              const isDetailActive = activeSkillDetail === sk;
+                              return (
+                                <div key={i} className="inline-flex items-center group">
+                                  <button
+                                    type="button"
+                                    onClick={() => setActiveSkillDetail(isDetailActive ? null : sk)}
+                                    className={`px-2 py-0.5 rounded text-[11px] border transition flex items-center gap-1 ${
+                                      isDetailActive
+                                        ? 'bg-[#2c2620] text-white border-[#2c2620]'
+                                        : 'bg-[#f0e9dc] hover:bg-[#e4dcce] text-[#4d4235] border-[#d8ccb4]'
+                                    }`}
+                                    title="Clique para inspecionar experiências, projetos e conquistas vinculados"
+                                  >
+                                    <span>{sk}</span>
+                                    {assoc.total > 0 && (
+                                      <span
+                                        className={`ml-1 px-1.5 py-0.2 rounded-full text-[9px] font-bold ${
+                                          isDetailActive
+                                            ? 'bg-white/20 text-white'
+                                            : 'bg-[#d8eed0] text-[#1c6434] border border-[#a2d8b0]'
+                                        }`}
+                                      >
+                                        ✓ {assoc.total}
+                                      </span>
+                                    )}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRemoveSkillFromCategory(category, sk)}
+                                    className="opacity-0 group-hover:opacity-100 p-0.5 text-[#993333] hover:text-[#771111] hover:bg-[#fce8e8] rounded transition ml-0.5"
+                                    title={`Remover ${sk} de ${category}`}
+                                  >
+                                    <X className="h-3 w-3" />
+                                  </button>
+                                </div>
+                              );
+                            })}
+                          </div>
+
+                          {/* Quick add skill to this category */}
+                          <div className="flex items-center gap-1.5 pt-1.5 border-t border-[#f4ede0]">
+                            <input
+                              type="text"
+                              placeholder={`+ Habilidade em ${category}...`}
+                              value={newCategorySkillInputs[category] || ''}
+                              onChange={(e) =>
+                                setNewCategorySkillInputs({ ...newCategorySkillInputs, [category]: e.target.value })
+                              }
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  e.preventDefault();
+                                  handleAddSkillToCategory(category, newCategorySkillInputs[category]);
+                                }
+                              }}
+                              className="bg-white border border-[#d8ccb4] rounded px-2 py-1 text-xs text-[#2c2620] w-56 placeholder:text-[#9e907e]"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => handleAddSkillToCategory(category, newCategorySkillInputs[category])}
+                              disabled={!newCategorySkillInputs[category]?.trim()}
+                              className="px-2.5 py-1 bg-[#f5ede0] hover:bg-[#ebdcc8] text-[#5e5142] border border-[#d8ccb4] rounded text-xs font-semibold disabled:opacity-40 transition"
+                            >
+                              Adicionar
+                            </button>
                           </div>
                         </div>
                       ))}
+
+                      {/* Active Skill Associations Detail Inspector */}
+                      {activeSkillDetail && (() => {
+                        const assoc = getSkillAssociations(activeSkillDetail);
+                        return (
+                          <div className="p-3 bg-[#fdfcf9] border-2 border-[#8b5a2b]/40 rounded-md shadow-xs space-y-2 animate-fadeIn">
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-1.5">
+                                <Tag className="h-4 w-4 text-[#8b5a2b]" />
+                                <span className="font-bold text-xs text-[#2c2620]">
+                                  Itens Vinculados à Habilidade: <span className="text-[#8b5a2b] font-mono uppercase">{activeSkillDetail}</span>
+                                </span>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => setActiveSkillDetail(null)}
+                                className="p-1 text-[#756758] hover:text-[#2c2620] rounded"
+                              >
+                                <X className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+
+                            {assoc.total === 0 ? (
+                              <p className="text-[11px] text-[#756758] italic">
+                                Nenhuma experiência, projeto ou conquista está associada a esta competência ainda. Edite um item para vinculá-la!
+                              </p>
+                            ) : (
+                              <div className="space-y-1.5 text-xs">
+                                {assoc.experiences.length > 0 && (
+                                  <div>
+                                    <span className="font-semibold text-[11px] text-[#3d3327] block">
+                                      Experiências ({assoc.experiences.length}):
+                                    </span>
+                                    <div className="flex flex-wrap gap-1 mt-0.5">
+                                      {assoc.experiences.map((exp, i) => (
+                                        <span key={i} className="px-2 py-0.5 bg-[#eef8f0] text-[#1c6434] border border-[#a2d8b0] rounded text-[11px]">
+                                          {exp.role} @ {exp.company}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                                {assoc.projects.length > 0 && (
+                                  <div>
+                                    <span className="font-semibold text-[11px] text-[#3d3327] block">
+                                      Projetos ({assoc.projects.length}):
+                                    </span>
+                                    <div className="flex flex-wrap gap-1 mt-0.5">
+                                      {assoc.projects.map((proj, i) => (
+                                        <span key={i} className="px-2 py-0.5 bg-[#f0f4fe] text-[#1a56db] border border-[#a4bcfd] rounded text-[11px]">
+                                          {proj.title}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                                {assoc.awards.length > 0 && (
+                                  <div>
+                                    <span className="font-semibold text-[11px] text-[#3d3327] block">
+                                      Conquistas & Certificados ({assoc.awards.length}):
+                                    </span>
+                                    <div className="flex flex-wrap gap-1 mt-0.5">
+                                      {assoc.awards.map((aw, i) => (
+                                        <span key={i} className="px-2 py-0.5 bg-[#fef6ee] text-[#b45309] border border-[#fbd38d] rounded text-[11px]">
+                                          {aw.title}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </div>
                   ) : (
                     <div className="p-4 bg-[#fffdfa] rounded border border-[#dfd5be] text-xs text-[#756758] italic font-serif text-center">
-                      Nenhuma competência registrada. Importe um currículo em PDF para extrair habilidades automaticamente.
+                      Nenhuma competência registrada. Importe um currículo em PDF ou adicione uma nova categoria acima.
                     </div>
                   )}
                 </div>
@@ -3278,18 +3727,6 @@ export default function App() {
                     </div>
                   </div>
                   <div>
-                    <label className="block text-[11px] font-bold text-[#5e5142] uppercase mb-1">
-                      Tags / Tecnologias (separadas por vírgula)
-                    </label>
-                    <input
-                      type="text"
-                      value={editingItem.form.tags || ''}
-                      onChange={(e) => setEditingItem({ ...editingItem, form: { ...editingItem.form, tags: e.target.value } })}
-                      placeholder="Ex: TypeScript, NestJS, React, Docker"
-                      className="w-full bg-[#fffdfa] border border-[#d8ccb4] rounded px-3 py-1.5 text-xs text-[#2c2620]"
-                    />
-                  </div>
-                  <div>
                     <div className="flex items-center justify-between mb-1.5">
                       <label className="block text-[11px] font-bold text-[#5e5142] uppercase">
                         Bullets de Impacto (um por linha)
@@ -3391,27 +3828,15 @@ export default function App() {
                       />
                     </div>
                   </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-[11px] font-bold text-[#5e5142] uppercase mb-1">Período / Ano</label>
-                      <input
-                        type="text"
-                        value={editingItem.form.period || ''}
-                        onChange={(e) => setEditingItem({ ...editingItem, form: { ...editingItem.form, period: e.target.value } })}
-                        placeholder="Ex: 2025"
-                        className="w-full bg-[#fffdfa] border border-[#d8ccb4] rounded px-3 py-1.5 text-xs text-[#2c2620]"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[11px] font-bold text-[#5e5142] uppercase mb-1">Tags (vírgula)</label>
-                      <input
-                        type="text"
-                        value={editingItem.form.tags || ''}
-                        onChange={(e) => setEditingItem({ ...editingItem, form: { ...editingItem.form, tags: e.target.value } })}
-                        placeholder="Ex: C, eBPF, DNS"
-                        className="w-full bg-[#fffdfa] border border-[#d8ccb4] rounded px-3 py-1.5 text-xs text-[#2c2620]"
-                      />
-                    </div>
+                  <div>
+                    <label className="block text-[11px] font-bold text-[#5e5142] uppercase mb-1">Período / Ano</label>
+                    <input
+                      type="text"
+                      value={editingItem.form.period || ''}
+                      onChange={(e) => setEditingItem({ ...editingItem, form: { ...editingItem.form, period: e.target.value } })}
+                      placeholder="Ex: 2025"
+                      className="w-full bg-[#fffdfa] border border-[#d8ccb4] rounded px-3 py-1.5 text-xs text-[#2c2620]"
+                    />
                   </div>
                   <div>
                     <div className="flex items-center justify-between mb-1.5">
@@ -3608,6 +4033,109 @@ export default function App() {
                     />
                   </div>
                 </>
+              )}
+
+              {/* Componente Universal de Associação de Habilidades para Experiências, Projetos e Conquistas */}
+              {editingItem.type !== 'personal' && (
+                <div className="space-y-2 pt-2 border-t border-[#ebdcc8]">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-[11px] font-bold text-[#5e5142] uppercase flex items-center gap-1.5">
+                      <Tag className="h-3.5 w-3.5 text-[#8b5a2b]" />
+                      <span>Habilidades & Tecnologias Associadas ({Array.isArray(editingItem.form.tags) ? editingItem.form.tags.length : 0})</span>
+                    </label>
+                    <button
+                      type="button"
+                      onClick={handleAutoDetectSkills}
+                      className="text-[11px] font-sans font-bold text-[#206634] hover:text-[#144221] bg-[#eef8f0] border border-[#a2d8b0] px-2 py-0.5 rounded flex items-center gap-1 transition shadow-2xs"
+                      title="Analisa o texto deste item e vincula automaticamente competências do perfil"
+                    >
+                      <Sparkles className="h-3 w-3" />
+                      <span>Auto-detectar do Texto</span>
+                    </button>
+                  </div>
+
+                  {/* Active Chips */}
+                  <div className="flex flex-wrap gap-1.5 min-h-[34px] p-2 bg-[#fdfcf9] border border-[#d8ccb4] rounded-md items-center">
+                    {Array.isArray(editingItem.form.tags) && editingItem.form.tags.length > 0 ? (
+                      editingItem.form.tags.map((t, idx) => (
+                        <span
+                          key={idx}
+                          className="inline-flex items-center gap-1 bg-[#2c2620] text-[#f7f3e8] px-2 py-0.5 rounded text-[11px] font-medium shadow-2xs"
+                        >
+                          <span>{t}</span>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveTagFromEditingItem(t)}
+                            className="hover:text-[#f87171] text-[#c4b5a0] transition ml-0.5"
+                            title={`Desvincular ${t}`}
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        </span>
+                      ))
+                    ) : (
+                      <span className="text-[11px] text-[#8c7f70] italic">
+                        Nenhuma habilidade associada ainda. Digite abaixo ou selecione da lista rápida.
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Custom Tag Input */}
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={newSkillInput}
+                      onChange={(e) => setNewSkillInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          handleAddTagToEditingItem(newSkillInput);
+                        }
+                      }}
+                      placeholder="Digitar habilidade (ex: Docker, Rust, eBPF)..."
+                      className="flex-1 bg-[#fffdfa] border border-[#d8ccb4] rounded px-3 py-1.5 text-xs text-[#2c2620] placeholder:text-[#9e907e]"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => handleAddTagToEditingItem(newSkillInput)}
+                      disabled={!newSkillInput.trim()}
+                      className="px-3 py-1.5 bg-[#8b5a2b] hover:bg-[#6e441f] text-white rounded text-xs font-semibold disabled:opacity-40 transition flex items-center gap-1 shrink-0"
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                      <span>Vincular</span>
+                    </button>
+                  </div>
+
+                  {/* Quick Palette from Profile Skills */}
+                  {allProfileSkills.length > 0 && (
+                    <div className="pt-1">
+                      <span className="text-[10px] font-bold text-[#756758] uppercase tracking-wider block mb-1">
+                        Competências do Perfil (clique para alternar vínculo):
+                      </span>
+                      <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto p-1.5 bg-white border border-[#ebdcc8] rounded">
+                        {allProfileSkills.map((sk, idx) => {
+                          const isSelected = Array.isArray(editingItem.form.tags) &&
+                            editingItem.form.tags.some((t) => t.toLowerCase() === sk.toLowerCase());
+                          return (
+                            <button
+                              key={idx}
+                              type="button"
+                              onClick={() => handleToggleTagInEditingItem(sk)}
+                              className={`text-[11px] px-2 py-0.5 rounded border transition flex items-center gap-1 ${
+                                isSelected
+                                  ? 'bg-[#206634] text-white border-[#206634] font-medium shadow-2xs'
+                                  : 'bg-[#f8f5ee] hover:bg-[#eee6d4] text-[#4d4235] border-[#dfd5be]'
+                              }`}
+                            >
+                              {isSelected && <Check className="h-2.5 w-2.5" />}
+                              <span>{sk}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
               )}
 
               {/* Inline AI Suggestion Preview with Token Accountability */}

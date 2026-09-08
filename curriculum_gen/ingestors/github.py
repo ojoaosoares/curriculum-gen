@@ -60,10 +60,11 @@ class GitHubIngestor:
 
     def parse_readme_for_project(self, repo_data: Dict[str, Any], readme_text: Optional[str]) -> ProjectItem:
         """
-        Extracts project highlights, metrics, and tech stack from repository info and README.
+        Extracts project highlights, metrics, and tech stack from BOTH repository info (About/description)
+        and README markdown (overview sections, architecture, benchmarks, quantified metrics).
         """
         title = repo_data.get("name", "Project")
-        description = repo_data.get("description") or ""
+        description = (repo_data.get("description") or "").strip()
         html_url = repo_data.get("html_url", "")
         language = repo_data.get("language")
         topics = repo_data.get("topics", [])
@@ -71,54 +72,105 @@ class GitHubIngestor:
         bullets = []
         metrics = []
 
-        # Subtitle: language and topics
-        subtitle_parts = []
-        if language:
-            subtitle_parts.append(language)
-        if topics:
-            subtitle_parts.extend(topics[:4])
-        subtitle = ", ".join(subtitle_parts) if subtitle_parts else None
+        # 1. First bullet: Repo description (About)
+        # If GitHub repo has a description, it provides the essential high-level context
+        if description:
+            clean_desc = description.rstrip(".") + "."
+            bullets.append(clean_desc)
+            # Find metrics in description as well
+            found_metrics = re.findall(
+                r"(\b\d+[\d.,]*%|\b\d+(?:\.\d+)?\s*[\u00D7x]|\b[><]?\d+\s*(?:ms|us|ns|gbps|mbps)\b)",
+                clean_desc,
+                re.IGNORECASE,
+            )
+            metrics.extend(found_metrics)
 
+        # 2. Extract from README
         if readme_text:
-            # 1. Search for benchmark / metric lines
-            # Looks for bullet points with numbers, %, ms, x, throughput, latency
-            lines = readme_text.splitlines()
+            lines = [l.strip() for l in readme_text.splitlines()]
+
+            # 2a. Find overview/summary paragraph if not already covered by repo description
+            intro_lines = []
+            capture_intro = False
             for line in lines:
-                clean_line = line.strip()
-                if clean_line.startswith(("-", "*", "•")) and len(clean_line) > 15:
-                    bullet_text = clean_line.lstrip("-*• ").strip()
-                    # Check for metrics
+                if line.startswith("# ") or re.match(r"^##\s+(?:about|overview|description|introdução|sobre|resumo)", line, re.IGNORECASE):
+                    capture_intro = True
+                    continue
+                if capture_intro:
+                    if line.startswith("#"):
+                        break
+                    if line and not line.startswith(("[!", "<", "[![", "```")):
+                        intro_lines.append(line)
+                        if len(intro_lines) >= 2 or line.endswith("."):
+                            break
+
+            if intro_lines:
+                intro_text = " ".join(intro_lines).strip()
+                if len(intro_text) > 25 and (not description or description.lower() not in intro_text.lower()):
+                    bullets.append(intro_text[:280].rstrip(".") + ".")
+
+            # 2b. Search for benchmark, metric, or technical architecture lines
+            for line in lines:
+                is_bullet = line.startswith(("-", "*", "•"))
+                line_content = line.lstrip("-*• ").strip() if is_bullet else line
+
+                if len(line_content) > 15:
                     found_metrics = re.findall(
-                        r"(\b\d+[\d.,]*%|\b\d+(?:\.\d+)?\s*[\u00D7x]|\b[><]?\d+\s*ms\b)",
-                        bullet_text,
+                        r"(\b\d+[\d.,]*%|\b\d+(?:\.\d+)?\s*[\u00D7x]|\b[><]?\d+\s*(?:ms|us|ns|gbps|mbps)\b)",
+                        line_content,
                         re.IGNORECASE,
                     )
                     if found_metrics:
                         metrics.extend(found_metrics)
-                        bullets.append(bullet_text)
-                    elif any(kw in bullet_text.lower() for kw in ["reduced", "increased", "optimized", "built", "implemented", "achieved"]):
-                        bullets.append(bullet_text)
+                        if line_content not in bullets:
+                            bullets.append(line_content)
+                    elif is_bullet and any(kw in line_content.lower() for kw in [
+                        "reduced", "increased", "optimized", "built", "implemented", "achieved", "designed",
+                        "desenvolveu", "otimizou", "implementou", "alcançou", "redução", "aumento", "vazão", "latência"
+                    ]):
+                        if line_content not in bullets:
+                            bullets.append(line_content)
 
             # Cap extracted bullets to top 4 most informative
             bullets = bullets[:4]
 
-        # If no bullet points were found in the README, fall back to repo description
-        if not bullets and description:
-            bullets.append(description)
+        # 3. Fallback if both description and readme were empty
+        if not bullets:
+            bullets.append(f"Desenvolvimento e arquitetura do projeto {title}.")
 
+        # 4. Tech stack: Language, Topics, and Technologies detected in README
         tags = []
         if language:
             tags.append(language)
-        tags.extend(topics)
+        for t in topics:
+            if t not in tags:
+                tags.append(t)
+
+        if readme_text:
+            common_techs = [
+                "eBPF", "XDP", "Linux Kernel", "DNS", "C", "C++", "Rust", "Go", "Python",
+                "TypeScript", "React", "React Native", "NestJS", "Node.js", "TypeORM",
+                "Docker", "Kubernetes", "Playwright", "Jest", "GPU", "CUDA", "ns-3"
+            ]
+            lower_readme = readme_text.lower()
+            for tech in common_techs:
+                if tech.lower() in lower_readme and tech not in tags:
+                    tags.append(tech)
+
+        subtitle_parts = []
+        if language:
+            subtitle_parts.append(language)
+        subtitle_parts.extend([t for t in tags if t != language][:4])
+        subtitle = ", ".join(subtitle_parts) if subtitle_parts else None
 
         return ProjectItem(
             title=title,
             subtitle=subtitle,
             url=html_url,
             url_label="GitHub",
-            tags=tags,
+            tags=tags[:8],
             raw_bullets=bullets,
-            metrics=metrics,
+            metrics=list(dict.fromkeys(metrics)),
             github_repo=repo_data.get("full_name"),
             readme_content=readme_text,
         )

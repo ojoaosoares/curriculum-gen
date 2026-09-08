@@ -25,3 +25,7 @@ def test_readme_parsing_metrics():
     assert "73.3%" in " ".join(project.metrics)
     assert "16x" in " ".join(project.metrics)
     assert len(project.raw_bullets) >= 2
+    # Verify both description and README are captured in raw_bullets
+    assert any("distributed crawler in python" in b.lower() for b in project.raw_bullets)
+    assert any("73.3%" in b for b in project.raw_bullets)
+    assert project.readme_content == sample_readme
