@@ -1465,7 +1465,7 @@ export default function App() {
           </div>
         </div>
 
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3">
           {/* Status Indicator */}
           <div className="flex items-center gap-2 text-xs font-sans bg-[#f2ecde] px-3 py-1.5 rounded border border-[#dfd5be]">
             <span
@@ -1477,6 +1477,42 @@ export default function App() {
               {backendOnline ? 'Backend Local Ativo' : 'Backend Desconectado'}
             </span>
           </div>
+
+          {/* Active AI Model Badge */}
+          <button
+            type="button"
+            onClick={() => setActiveTab('llm')}
+            className={`flex items-center gap-2 text-xs font-sans px-3 py-1.5 rounded border transition shadow-2xs hover:border-[#8b5a2b] ${
+              apiKey && apiKey.trim()
+                ? 'bg-[#eef8f0] border-[#a2d8b0] text-[#1c6434]'
+                : 'bg-[#f8f5ee] border-[#dfd5be] text-[#756758]'
+            }`}
+            title={
+              apiKey && apiKey.trim()
+                ? `Modelo ativo: ${model} (${provider === 'gemini' ? 'Google Gemini' : provider === 'openai' ? 'OpenAI' : 'Groq'}). Clique para gerenciar.`
+                : 'IA em modo Offline Local (sem chave de API configurada). Clique para ativar Gemini, Groq ou OpenAI.'
+            }
+          >
+            <span
+              className={`h-2 w-2 rounded-full ${
+                apiKey && apiKey.trim() ? 'bg-emerald-600' : 'bg-amber-500'
+              }`}
+            />
+            <Sparkles className={`h-3.5 w-3.5 ${apiKey && apiKey.trim() ? 'text-[#1c6434]' : 'text-[#8b5a2b]'}`} />
+            <span className="text-xs font-medium">
+              {apiKey && apiKey.trim() ? (
+                <>
+                  <span className="font-bold text-[#221c16]">IA:</span>{' '}
+                  <span className="font-mono font-semibold text-[11px] text-[#1c6434]">{model}</span>
+                </>
+              ) : (
+                <>
+                  <span className="font-bold text-[#594935]">IA:</span>{' '}
+                  <span className="italic text-[11px] text-[#756758]">Offline (Heurística)</span>
+                </>
+              )}
+            </span>
+          </button>
 
           {/* Primary Action Button */}
           <button
