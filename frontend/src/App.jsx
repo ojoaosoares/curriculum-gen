@@ -4176,6 +4176,27 @@ export default function App() {
                     {aiSuggestionState.text}
                   </div>
 
+                  {aiSuggestionState.provider === 'offline_heuristic' && (
+                    <div className="flex items-center justify-between text-[11px] bg-[#fff8e6] border border-[#ecd292] text-[#845305] px-2.5 py-1.5 rounded">
+                      <div className="flex items-center gap-1.5">
+                        <AlertCircle className="h-3.5 w-3.5 shrink-0 text-[#b45309]" />
+                        <span>
+                          <strong>Modo Offline Local:</strong> Gerado via motor de regras local (zero custo de tokens). Para variações dinâmicas e reescritas com IA gerativa em nuvem, configure sua chave na aba <strong>LLM / IA</strong>.
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingItem(null);
+                          setActiveTab('llm');
+                        }}
+                        className="underline hover:text-[#523303] ml-2 shrink-0 font-semibold text-[10px]"
+                      >
+                        Configurar Chave ↗
+                      </button>
+                    </div>
+                  )}
+
                   <div className="flex items-center justify-end gap-2 pt-1">
                     <button
                       type="button"

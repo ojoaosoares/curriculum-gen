@@ -2,6 +2,7 @@ import os
 import re
 import json
 import hashlib
+import random
 from typing import List, Optional, Dict, Any
 from openai import OpenAI
 from curriculum_gen.models import (
@@ -252,7 +253,7 @@ class LLMOptimizer:
                 self.client = None
 
     def is_available(self) -> bool:
-        return self.client is not None
+        return bool(self.client is not None or (self.api_key and self.provider == "gemini"))
 
     def get_token_metrics(self) -> dict:
         total = self.tokens_used + self.tokens_saved
@@ -815,7 +816,7 @@ INSTRUCTIONS & CRITICAL CONSTRAINTS:
                     payload = {
                         "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
                         "generationConfig": {
-                            "temperature": 0.2,
+                            "temperature": 0.4,
                             "maxOutputTokens": 384,
                         },
                     }
@@ -854,7 +855,7 @@ INSTRUCTIONS & CRITICAL CONSTRAINTS:
                             {"role": "system", "content": f"You are an expert technical CV optimizer. Output exclusively the complete, professional description in {target_lang} without fragments."},
                             {"role": "user", "content": user_prompt},
                         ],
-                        temperature=0.2,
+                        temperature=0.4,
                         max_tokens=384,
                     )
                     txt = response.choices[0].message.content.strip()
@@ -876,89 +877,147 @@ INSTRUCTIONS & CRITICAL CONSTRAINTS:
                 except Exception as e:
                     print(f"[LLMOptimizer] generate_description OpenAI failed: {e}")
 
-        # 2. Contextual deterministic heuristic baseline (0 tokens used, ~320 tokens saved)
+        # 2. Contextual heuristic baseline (0 tokens used, ~320 tokens saved)
+        import random
         comb = f"{(title or '').lower()} {(subtitle_or_org or '').lower()} {(current_description or '').lower()}"
         has_atesn = "atesn" in comb or any("atesn" in r.get("title", "").lower() for r in cross_refs)
 
         heuristic_text = ""
 
-        # SBESC presentation
-        if "sbesc" in comb or ("symposium" in comb and "computing systems" in comb):
-            if has_atesn:
+        # If user explicitly requested 'improve' and provided substantial existing text, refine their content
+        if mode == "improve" and current_description and len(current_description.strip()) > 10:
+            clean_curr = current_description.strip().rstrip(".")
+            if "\n" in clean_curr:
+                polished_lines = []
+                for line in clean_curr.splitlines():
+                    l_str = line.strip().lstrip("-*•◦ ").strip()
+                    if l_str:
+                        polished_lines.append(f"◦ {l_str[0].upper() + l_str[1:] if len(l_str) > 1 else l_str.upper()}.")
+                heuristic_text = "\n".join(polished_lines)
+            elif item_type == "award":
                 heuristic_text = (
-                    "Apresentação e publicação de artigo técnico sobre o projeto AtesN-DS no XV Simpósio Brasileiro de Engenharia de Sistemas Computacionais (SBESC), demonstrando a arquitetura do resolvedor DNS em kernel via eBPF/XDP com comprovação de 51% de redução na latência e 213% de ganho de vazão."
+                    f"Distinção técnica conferida a {title}, reconhecendo a excelência de execução em {clean_curr[0].lower() + clean_curr[1:]} e o mérito dos resultados demonstrados."
                     if is_pt
-                    else "Presented technical research paper on AtesN-DS at the XV Brazilian Symposium on Computing Systems Engineering (SBESC), showcasing a Linux kernel-level recursive DNS resolver built with eBPF/XDP achieving 51% lower latency and 213% higher throughput."
+                    else f"Technical distinction awarded for {title}, recognizing demonstrated excellence in {clean_curr} and verifiable impact on performance standards."
                 )
             else:
                 heuristic_text = (
-                    "Apresentação e publicação de trabalho técnico-científico no Simpósio Brasileiro de Engenharia de Sistemas Computacionais (SBESC), destacando inovações em sistemas embarcados e computação de alto desempenho."
+                    f"◦ {clean_curr[0].upper() + clean_curr[1:]}, aplicando boas práticas de engenharia de software e arquiteturas robustas para maximizar confiabilidade e desempenho."
                     if is_pt
-                    else "Technical paper presentation at the Brazilian Symposium on Computing Systems Engineering (SBESC), highlighting contributions to embedded systems and high-performance computing."
+                    else f"◦ {clean_curr[0].upper() + clean_curr[1:]}, applying software engineering best practices and robust architectures for peak reliability."
                 )
+
+        # SBESC presentation
+        elif "sbesc" in comb or ("symposium" in comb and "computing systems" in comb):
+            if has_atesn:
+                options = [
+                    "Apresentação e publicação de artigo técnico sobre o projeto AtesN-DS no XV Simpósio Brasileiro de Engenharia de Sistemas Computacionais (SBESC), demonstrando a arquitetura do resolvedor DNS em kernel via eBPF/XDP com comprovação de 51% de redução na latência e 213% de ganho de vazão.",
+                    "Apresentação científica do projeto AtesN-DS no XV Simpósio Brasileiro de Engenharia de Sistemas Computacionais (SBESC 2025), destacando a implementação de processamento de pacotes DNS de alta performance com eBPF e bypass do stack de rede no kernel Linux.",
+                    "Publicação e defesa técnica no SBESC 2025 do sistema AtesN-DS, validando experimentalmente ganhos substanciais de latência (-51%) e escalabilidade em throughput (+213%) sob cargas intensivas de tráfego de rede.",
+                ] if is_pt else [
+                    "Presented technical research paper on AtesN-DS at the XV Brazilian Symposium on Computing Systems Engineering (SBESC), showcasing a Linux kernel-level recursive DNS resolver built with eBPF/XDP achieving 51% lower latency and 213% higher throughput.",
+                    "Delivered scientific presentation at SBESC 2025 on AtesN-DS, highlighting high-performance DNS packet processing using eBPF/XDP and kernel-bypass networking architectures.",
+                    "Published and defended technical findings at SBESC 2025 on AtesN-DS, experimentally demonstrating significant latency reduction (-51%) and throughput gains (+213%) under high-load network conditions.",
+                ]
+            else:
+                options = [
+                    "Apresentação e publicação de trabalho técnico-científico no Simpósio Brasileiro de Engenharia de Sistemas Computacionais (SBESC), destacando inovações em sistemas embarcados e computação de alto desempenho.",
+                    "Participação e apresentação de pesquisa aplicada no SBESC, abordando metodologias de avaliação e otimização para sistemas computacionais críticos.",
+                ] if is_pt else [
+                    "Technical paper presentation at the Brazilian Symposium on Computing Systems Engineering (SBESC), highlighting contributions to embedded systems and high-performance computing.",
+                    "Presentation of applied computing research at SBESC, emphasizing performance evaluation and systems engineering methodologies.",
+                ]
+            heuristic_text = random.choice(options)
 
         # UFMG Semana do Conhecimento / Relevância Acadêmica
         elif "ufmg" in comb or "relevância acadêmica" in comb or "conhecimento" in comb:
             if has_atesn:
-                heuristic_text = (
-                    "Láurea de Relevância Acadêmica na Semana do Conhecimento UFMG 2025 pelo desenvolvimento do projeto AtesN-DS no Laboratório de Engenharia de Computadores (Lecom), reconhecendo o impacto científico da aceleração de resolução DNS com eBPF/XDP no kernel Linux."
-                    if is_pt
-                    else "Awarded Academic Distinction (Relevância Acadêmica) at UFMG Knowledge Week 2025 for research on the AtesN-DS recursive DNS resolver at Lecom, recognizing scientific innovation in Linux kernel acceleration via eBPF/XDP."
-                )
+                options = [
+                    "Láurea de Relevância Acadêmica na Semana do Conhecimento UFMG 2025 pelo desenvolvimento do projeto AtesN-DS no Laboratório de Engenharia de Computadores (Lecom), reconhecendo o impacto científico da aceleração de resolução DNS com eBPF/XDP no kernel Linux.",
+                    "Distinção honorífica de Relevância Acadêmica na Semana do Conhecimento UFMG 2025, premiando a pesquisa em sistemas de alto desempenho com eBPF/XDP aplicada à resolução DNS recursiva de ultra-baixa latência.",
+                    "Reconhecimento de Relevância Acadêmica pela UFMG pela autoria e resultados do projeto AtesN-DS no Lecom, validando contribuições científicas na redução de 51% na latência de rede no kernel Linux.",
+                ] if is_pt else [
+                    "Awarded Academic Distinction (Relevância Acadêmica) at UFMG Knowledge Week 2025 for research on the AtesN-DS recursive DNS resolver at Lecom, recognizing scientific innovation in Linux kernel acceleration via eBPF/XDP.",
+                    "Honored with Relevância Acadêmica at UFMG Knowledge Week 2025 for pioneering high-performance Linux kernel network research and ultra-low latency recursive DNS resolution with eBPF/XDP.",
+                    "Academic Distinction at UFMG 2025 recognizing research excellence and empirical results from project AtesN-DS, achieving verified 51% latency drops in packet processing.",
+                ]
             else:
-                heuristic_text = (
-                    "Destaque de Relevância Acadêmica concedido na Semana do Conhecimento UFMG, reconhecendo o mérito científico e o impacto dos resultados obtidos no projeto de pesquisa científica."
-                    if is_pt
-                    else "Academic Distinction awarded at UFMG Knowledge Week, recognizing the scientific merit and demonstrated research impact in computing sciences."
-                )
+                options = [
+                    "Destaque de Relevância Acadêmica concedido na Semana do Conhecimento UFMG, reconhecendo o mérito científico e o impacto dos resultados obtidos no projeto de pesquisa científica.",
+                    "Láurea de Mérito Acadêmico na Semana do Conhecimento UFMG, premiando o rigor metodológico e a relevância prática dos resultados desenvolvidos.",
+                ] if is_pt else [
+                    "Academic Distinction awarded at UFMG Knowledge Week, recognizing the scientific merit and demonstrated research impact in computing sciences.",
+                    "Academic Merit distinction at UFMG Knowledge Week, honoring methodological rigor and practical relevance in computer science research.",
+                ]
+            heuristic_text = random.choice(options)
 
         # Cisco / Networking Basics
         elif "cisco" in comb or ("network" in comb and "basic" in comb):
-            heuristic_text = (
-                "Certificação técnica Cisco em fundamentos de redes de computadores, cobrindo arquitetura TCP/IP, endereçamento e sub-redes IPv4/IPv6, protocolos de roteamento e diagnóstico de conectividade."
-                if is_pt
-                else "Cisco technical certification in computer networking fundamentals, covering TCP/IP architecture, IPv4/IPv6 subnetting, routing protocols, and enterprise connectivity troubleshooting."
-            )
+            options = [
+                "Certificação técnica Cisco em fundamentos de redes de computadores, cobrindo arquitetura TCP/IP, endereçamento e sub-redes IPv4/IPv6, protocolos de roteamento e diagnóstico de conectividade.",
+                "Credencial profissional Cisco Networking Academy, validando competências práticas em topologia de redes empresariais, switches, roteadores e resolução de falhas em camadas de enlace e rede.",
+            ] if is_pt else [
+                "Cisco technical certification in computer networking fundamentals, covering TCP/IP architecture, IPv4/IPv6 subnetting, routing protocols, and enterprise connectivity troubleshooting.",
+                "Cisco Networking Academy professional credential, validating applied competencies in enterprise network topology, routing, and layer-2/layer-3 fault isolation.",
+            ]
+            heuristic_text = random.choice(options)
 
         # Cybersecurity
         elif "cybersecurity" in comb or "segurança" in comb:
-            heuristic_text = (
-                "Capacitação técnica em segurança da informação e defesa de infraestruturas cibernéticas, englobando controle de acessos, criptografia, sistemas de detecção de intrusão (IDS/IPS) e mitigação proativa de ameaças."
-                if is_pt
-                else "Technical training in information security and cyber infrastructure defense, covering access control, cryptography, intrusion detection systems (IDS/IPS), and proactive threat mitigation."
-            )
+            options = [
+                "Capacitação técnica em segurança da informação e defesa de infraestruturas cibernéticas, englobando controle de acessos, criptografia, sistemas de detecção de intrusão (IDS/IPS) e mitigação proativa de ameaças.",
+                "Certificação prática em segurança cibernética, com ênfase em modelagem de ameaças, políticas de proteção de dados, hardening de sistemas e análise de vulnerabilidades de rede.",
+            ] if is_pt else [
+                "Technical training in information security and cyber infrastructure defense, covering access control, cryptography, intrusion detection systems (IDS/IPS), and proactive threat mitigation.",
+                "Practical cybersecurity certification focusing on threat modeling, network data protection policies, system hardening, and proactive vulnerability assessment.",
+            ]
+            heuristic_text = random.choice(options)
 
         # Japanese / JLPT
         elif "japanese" in comb or "japon" in comb or "jlpt" in comb:
-            heuristic_text = (
-                "Certificação internacional de proficiência em língua japonesa (JLPT), comprovando domínio de gramática, vocabulário e compreensão contextual para atuação profissional."
-                if is_pt
-                else "International Japanese-Language Proficiency Test (JLPT) certification, validating vocabulary mastery, grammatical structures, and contextual communication in professional settings."
-            )
+            options = [
+                "Certificação internacional de proficiência em língua japonesa (JLPT), comprovando domínio de gramática, vocabulário e compreensão contextual para atuação profissional.",
+                "Qualificação oficial em língua japonesa pelo Japanese-Language Proficiency Test (JLPT), demonstrando capacidade de leitura técnica e comunicação intercultural estruturada.",
+            ] if is_pt else [
+                "International Japanese-Language Proficiency Test (JLPT) certification, validating vocabulary mastery, grammatical structures, and contextual communication in professional settings.",
+                "Official qualification in Japanese language via the JLPT, demonstrating structured reading comprehension and intercultural technical communication skills.",
+            ]
+            heuristic_text = random.choice(options)
 
         # GPU / Packet Processing / SBRC
         elif "gpu" in comb or "sbrc" in comb:
-            heuristic_text = (
-                "Coautoria do minicurso 'Processamento de Pacotes em GPU' publicado no livro de minicursos da SBRC 2025, abordando arquiteturas paralelas de filtragem e processamento massivo de pacotes de dados em GPU."
-                if is_pt
-                else "Co-authored the minicourse 'GPU Packet Processing' published in the SBRC 2025 proceedings, covering parallel packet filtering architectures and high-throughput processing on GPUs."
-            )
+            options = [
+                "Coautoria do minicurso 'Processamento de Pacotes em GPU' publicado no livro de minicursos da SBRC 2025, abordando arquiteturas paralelas de filtragem e processamento massivo de pacotes de dados em GPU.",
+                "Publicação acadêmica e docência de minicurso no SBRC 2025 sobre aceleração de funções de rede em GPU, explorando paralelismo massivo em CUDA para throughput ultra-elevado.",
+            ] if is_pt else [
+                "Co-authored the minicourse 'GPU Packet Processing' published in the SBRC 2025 proceedings, covering parallel packet filtering architectures and high-throughput processing on GPUs.",
+                "Academic publication and minicourse teaching at SBRC 2025 on GPU-accelerated network functions, leveraging massive parallelism in CUDA for multi-gigabit throughput.",
+            ]
+            heuristic_text = random.choice(options)
 
         # AtesN-DS standalone project
         elif "atesn" in comb or ("ebpf" in comb and "dns" in comb):
-            heuristic_text = (
-                "Desenvolvimento de um resolvedor DNS recursivo híbrido de alta performance operando diretamente no kernel Linux via eBPF e XDP, contornando a pilha de rede tradicional e alcançando 51% de redução na latência com 213% de aumento na vazão de consultas."
-                if is_pt
-                else "Developed a high-performance hybrid recursive DNS resolver operating directly in the Linux kernel via eBPF and XDP, bypassing traditional network stack overhead to achieve a 51% latency reduction and a 213% throughput increase."
-            )
+            options = [
+                "Desenvolvimento de um resolvedor DNS recursivo híbrido de alta performance operando diretamente no kernel Linux via eBPF e XDP, contornando a pilha de rede tradicional e alcançando 51% de redução na latência com 213% de aumento na vazão de consultas.",
+                "Arquitetou o AtesN-DS: resolvedor recursivo de DNS programado com eBPF/XDP no kernel Linux, validado experimentalmente com ganhos de 51% de redução de latência e 213% de incremento em vazão frente ao estado da arte.",
+                "Pesquisa e desenvolvimento em redes programáveis de alto desempenho, implementando bypass de kernel com eBPF e filtros XDP para acelerar transações DNS em mais de 2x.",
+            ] if is_pt else [
+                "Developed a high-performance hybrid recursive DNS resolver operating directly in the Linux kernel via eBPF and XDP, bypassing traditional network stack overhead to achieve a 51% latency reduction and a 213% throughput increase.",
+                "Architected AtesN-DS: a kernel-space recursive DNS resolver utilizing eBPF/XDP, experimentally validated to deliver a 51% latency decrease and 213% throughput surge over standard resolvers.",
+                "Applied research in high-speed programmable networks, implementing Linux kernel bypass with eBPF/XDP filters to boost DNS lookup transactions by over 2x.",
+            ]
+            heuristic_text = random.choice(options)
 
         # Tarken / Web & Mobile Software Engineering
         elif "tarken" in comb or ("typescript" in comb and ("nest" in comb or "react" in comb)):
-            heuristic_text = (
-                "◦ Desenvolveu e integrou aplicações web e mobile multiplataforma utilizando o ecossistema TypeScript com React, React Native e NestJS.\n◦ Projetou APIs RESTful escaláveis com NestJS e TypeORM, garantindo alto desempenho, modularidade e consistência de dados.\n◦ Implementou interfaces de usuário responsivas com React e MUI, assegurando usabilidade e padrões modernos de design.\n◦ Estruturou suítes de testes unitários e testes end-to-end com Playwright, elevando a confiabilidade e a qualidade das entregas."
-                if is_pt
-                else "◦ Engineered and integrated multiplatform web and mobile applications using the TypeScript ecosystem with React, React Native, and NestJS.\n◦ Architected scalable RESTful APIs with NestJS and TypeORM, ensuring high performance, modularity, and database consistency.\n◦ Designed responsive user interfaces with React and MUI, adhering to modern accessibility and UX standards.\n◦ Implemented automated unit and end-to-end test suites using Playwright, increasing code reliability and release confidence."
-            )
+            options = [
+                "◦ Desenvolveu e integrou aplicações web e mobile multiplataforma utilizando o ecossistema TypeScript com React, React Native e NestJS.\n◦ Projetou APIs RESTful escaláveis com NestJS e TypeORM, garantindo alto desempenho, modularidade e consistência de dados.\n◦ Implementou interfaces de usuário responsivas com React e MUI, assegurando usabilidade e padrões modernos de design.\n◦ Estruturou suítes de testes unitários e testes end-to-end com Playwright, elevando a confiabilidade e a qualidade das entregas.",
+                "◦ Atuou no ciclo completo de desenvolvimento de software web/mobile com TypeScript, NestJS e React, construindo microserviços ágeis e resilientes.\n◦ Desenvolveu interfaces mobile em React Native e módulos web em React com foco em alta performance e experiência do usuário.\n◦ Otimizou queries de banco de dados e rotas de API com NestJS e TypeORM, mitigando gargalos de latência em produção.\n◦ Implementou pipelines de testes automatizados com Playwright e Jest, reduzindo taxa de regressões em ambientes de release.",
+            ] if is_pt else [
+                "◦ Engineered and integrated multiplatform web and mobile applications using the TypeScript ecosystem with React, React Native, and NestJS.\n◦ Architected scalable RESTful APIs with NestJS and TypeORM, ensuring high performance, modularity, and database consistency.\n◦ Designed responsive user interfaces with React and MUI, adhering to modern accessibility and UX standards.\n◦ Implemented automated unit and end-to-end test suites using Playwright, increasing code reliability and release confidence.",
+                "◦ Drove full-lifecycle web and mobile software engineering with TypeScript, NestJS, and React, building robust, modular microservices.\n◦ Built native mobile screens in React Native and web UIs with React/MUI, prioritizing responsiveness and user engagement.\n◦ Tuned database queries and API endpoints via NestJS and TypeORM to eliminate production latency bottlenecks.\n◦ Established end-to-end and integration test automation with Playwright and Jest, ensuring continuous quality.",
+            ]
+            heuristic_text = random.choice(options)
 
         # Generic heuristics with complete sentences
         elif item_type == "award":
