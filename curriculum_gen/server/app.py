@@ -41,8 +41,12 @@ app.add_middleware(
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
 
+def get_empty_profile() -> UserProfile:
+    return UserProfile.empty()
+
+
 def get_active_profile_path(for_write: bool = False) -> Path:
-    # Check dedicated user active profile first
+    # Dedicated user active profile in data/
     user_active = PROJECT_ROOT / "data" / "active_profile.yaml"
     if for_write:
         user_active.parent.mkdir(parents=True, exist_ok=True)
@@ -50,16 +54,16 @@ def get_active_profile_path(for_write: bool = False) -> Path:
     if user_active.exists():
         return user_active
 
-    # Fallback to local profile or sample
-    candidates = [
-        PROJECT_ROOT / "profile.yaml",
-        PROJECT_ROOT / "examples" / "profile_joaosoares.yaml",
-        PROJECT_ROOT / "examples" / "profile_sample.yaml",
-    ]
-    for c in candidates:
-        if c.exists():
-            return c
-    return candidates[-1]
+    # Check if a custom profile.yaml exists at the project root
+    root_profile = PROJECT_ROOT / "profile.yaml"
+    if root_profile.exists():
+        return root_profile
+
+    # Initialize data/active_profile.yaml with an empty profile by default
+    user_active.parent.mkdir(parents=True, exist_ok=True)
+    with open(user_active, "w", encoding="utf-8") as f:
+        yaml.dump(get_empty_profile().model_dump(), f, sort_keys=False, allow_unicode=True)
+    return user_active
 
 
 class GenerateRequest(BaseModel):
@@ -95,8 +99,8 @@ def health():
 def get_profile():
     path = get_active_profile_path()
     if not path.exists():
-        raise HTTPException(status_code=404, detail="No profile found")
-    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        return get_empty_profile()
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     return UserProfile(**data)
 
 
@@ -111,13 +115,11 @@ def save_profile(profile: UserProfile):
 @app.post("/api/profile/reset")
 def reset_profile():
     user_active = PROJECT_ROOT / "data" / "active_profile.yaml"
-    if user_active.exists():
-        user_active.unlink()
-    path = get_active_profile_path()
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="No profile found")
-    data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    return {"status": "reset", "profile": data}
+    empty = get_empty_profile()
+    user_active.parent.mkdir(parents=True, exist_ok=True)
+    with open(user_active, "w", encoding="utf-8") as f:
+        yaml.dump(empty.model_dump(), f, sort_keys=False, allow_unicode=True)
+    return {"status": "reset", "profile": empty.model_dump()}
 
 
 @app.post("/api/generate")

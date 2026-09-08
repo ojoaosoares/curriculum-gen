@@ -9,7 +9,7 @@ class ContactLink(BaseModel):
 
 
 class ContactInfo(BaseModel):
-    name: str
+    name: str = ""
     location: Optional[str] = None
     email: Optional[str] = None
     phone: Optional[str] = None
@@ -91,7 +91,7 @@ class AwardOrLeadershipItem(BaseModel):
 
 
 class UserProfile(BaseModel):
-    personal: ContactInfo
+    personal: ContactInfo = Field(default_factory=ContactInfo)
     education: List[EducationItem] = Field(default_factory=list)
     experiences: List[ExperienceItem] = Field(default_factory=list)
     awards_and_leadership: List[AwardOrLeadershipItem] = Field(default_factory=list)
@@ -99,6 +99,10 @@ class UserProfile(BaseModel):
     skills: Dict[str, Union[List[str], str]] = Field(default_factory=dict)
     last_updated: Optional[str] = None  # e.g. "Last updated in August 2026"
     primary_color_rgb: str = "0, 79, 144"  # Default clean deep blue
+
+    @classmethod
+    def empty(cls) -> "UserProfile":
+        return cls()
 
 
 class JobContext(BaseModel):

@@ -147,24 +147,11 @@ def test_profile_persistence_and_reset(tmp_path, monkeypatch):
 
     client = TestClient(server_module.app)
 
-    # Prepare sample profile in examples
-    examples_dir = tmp_path / "examples"
-    examples_dir.mkdir(parents=True, exist_ok=True)
-    (examples_dir / "profile_sample.yaml").write_text("""
-personal:
-  name: "Original Sample"
-  email: "sample@example.com"
-education: []
-experiences: []
-awards_and_leadership: []
-projects: []
-skills: {}
-""", encoding="utf-8")
-
-    # 1. Initial GET loads fallback
+    # 1. Initial GET loads default empty profile
     res = client.get("/api/profile")
     assert res.status_code == 200
-    assert res.json()["personal"]["name"] == "Original Sample"
+    assert res.json()["personal"]["name"] == ""
+    assert res.json()["experiences"] == []
 
     # 2. POST /api/profile saves to data/active_profile.yaml
     updated = res.json()
@@ -177,9 +164,36 @@ skills: {}
     assert get_res.status_code == 200
     assert get_res.json()["personal"]["name"] == "Saved User"
 
-    # 4. POST /api/profile/reset restores original sample
+    # 4. POST /api/profile/reset restores default empty profile
     reset_res = client.post("/api/profile/reset")
     assert reset_res.status_code == 200
-    assert reset_res.json()["profile"]["personal"]["name"] == "Original Sample"
+    assert reset_res.json()["profile"]["personal"]["name"] == ""
+    assert reset_res.json()["profile"]["experiences"] == []
+
+
+def test_profile_fallback_to_root_profile_yaml(tmp_path, monkeypatch):
+    import sys
+    from fastapi.testclient import TestClient
+    import curriculum_gen.server.app
+    server_module = sys.modules["curriculum_gen.server.app"]
+
+    monkeypatch.setattr(server_module, "PROJECT_ROOT", tmp_path)
+    client = TestClient(server_module.app)
+
+    # Place a custom profile.yaml in the root
+    (tmp_path / "profile.yaml").write_text("""
+personal:
+  name: "Root Configured User"
+  email: "root@example.com"
+education: []
+experiences: []
+awards_and_leadership: []
+projects: []
+skills: {}
+""", encoding="utf-8")
+
+    res = client.get("/api/profile")
+    assert res.status_code == 200
+    assert res.json()["personal"]["name"] == "Root Configured User"
 
 

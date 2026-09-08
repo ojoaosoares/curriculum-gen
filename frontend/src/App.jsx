@@ -91,7 +91,13 @@ export default function App() {
   const [profile, setProfile] = useState(() => {
     try {
       const cached = localStorage.getItem('curriculum_gen_active_profile');
-      return cached ? JSON.parse(cached) : null;
+      if (!cached) return null;
+      const parsed = JSON.parse(cached);
+      if (parsed?.personal?.name === 'João Soares') {
+        localStorage.removeItem('curriculum_gen_active_profile');
+        return null;
+      }
+      return parsed;
     } catch {
       return null;
     }
@@ -130,7 +136,7 @@ export default function App() {
   const [pdfUrl, setPdfUrl] = useState(null);
 
   // Ingestion State
-  const [ghUsername, setGhUsername] = useState('ojoaosoares');
+  const [ghUsername, setGhUsername] = useState('');
   const [ghLoading, setGhLoading] = useState(false);
   const [ghMessage, setGhMessage] = useState('');
 
@@ -295,7 +301,7 @@ export default function App() {
   };
 
   const handleResetProfile = async () => {
-    if (!window.confirm('Deseja restaurar o perfil padrão inicial? Quaisquer edições não salvas serão redefinidas.')) return;
+    if (!window.confirm('Deseja restaurar o perfil padrão inicial (vazio)? Quaisquer dados atuais serão redefinidos.')) return;
     try {
       const res = await fetch('/api/profile/reset', { method: 'POST' });
       if (res.ok) {
@@ -1139,7 +1145,7 @@ export default function App() {
                       <button
                         onClick={handleResetProfile}
                         className="text-[11px] font-sans font-medium text-[#8b5a2b] hover:text-[#5e3814] hover:underline"
-                        title="Restaurar perfil inicial padrão de exemplo"
+                        title="Restaurar perfil inicial padrão (vazio)"
                       >
                         Restaurar Padrão
                       </button>
@@ -1148,19 +1154,27 @@ export default function App() {
                   <div className="grid grid-cols-2 gap-3 text-sm font-serif">
                     <div>
                       <span className="text-xs font-sans text-[#786c5e] block">Nome</span>
-                      <span className="font-bold text-[#1f1913] text-base">{profile.personal.name}</span>
+                      <span className="font-bold text-[#1f1913] text-base">
+                        {profile.personal?.name?.trim() ? (
+                          profile.personal.name
+                        ) : (
+                          <span className="text-[#8c7f70] italic font-normal font-sans text-xs">
+                            (Não informado)
+                          </span>
+                        )}
+                      </span>
                     </div>
                     <div>
                       <span className="text-xs font-sans text-[#786c5e] block">Localização</span>
-                      <span className="text-[#3a3127]">{profile.personal.location || '-'}</span>
+                      <span className="text-[#3a3127]">{profile.personal?.location || '-'}</span>
                     </div>
                     <div>
                       <span className="text-xs font-sans text-[#786c5e] block">E-mail</span>
-                      <span className="text-[#3a3127]">{profile.personal.email || '-'}</span>
+                      <span className="text-[#3a3127]">{profile.personal?.email || '-'}</span>
                     </div>
                     <div>
                       <span className="text-xs font-sans text-[#786c5e] block">LinkedIn</span>
-                      <span className="text-[#3a3127] truncate block">{profile.personal.linkedin || '-'}</span>
+                      <span className="text-[#3a3127] truncate block">{profile.personal?.linkedin || '-'}</span>
                     </div>
                   </div>
                 </div>
@@ -1208,45 +1222,51 @@ export default function App() {
                     </button>
                   </div>
                   <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
-                    {profile.experiences?.map((exp, idx) => (
-                      <div key={idx} className="p-3 rounded border border-[#dfd5be] bg-[#fffdfa] text-xs space-y-1">
-                        <div className="flex justify-between items-start">
-                          <div>
-                            <span className="font-bold text-sm text-[#221c16] block">{exp.role}</span>
-                            <span className="text-[#635749] text-xs">{exp.company} {exp.location ? `• ${exp.location}` : ''}</span>
+                    {profile.experiences && profile.experiences.length > 0 ? (
+                      profile.experiences.map((exp, idx) => (
+                        <div key={idx} className="p-3 rounded border border-[#dfd5be] bg-[#fffdfa] text-xs space-y-1">
+                          <div className="flex justify-between items-start">
+                            <div>
+                              <span className="font-bold text-sm text-[#221c16] block">{exp.role}</span>
+                              <span className="text-[#635749] text-xs">{exp.company} {exp.location ? `• ${exp.location}` : ''}</span>
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <span className="text-[#756758] font-normal text-xs mr-1">{exp.period}</span>
+                              <button
+                                onClick={() => handleOpenEdit('experience', idx, exp)}
+                                className="p-1 rounded text-[#756758] hover:text-[#2c2620] hover:bg-[#eee6d4] transition"
+                                title="Editar experiência"
+                              >
+                                <Pencil className="h-3.5 w-3.5" />
+                              </button>
+                              <button
+                                onClick={() => handleDeleteItem('experience', idx)}
+                                className="p-1 rounded text-[#993333] hover:text-[#771111] hover:bg-[#fce8e8] transition"
+                                title="Excluir experiência"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
                           </div>
-                          <div className="flex items-center gap-1">
-                            <span className="text-[#756758] font-normal text-xs mr-1">{exp.period}</span>
-                            <button
-                              onClick={() => handleOpenEdit('experience', idx, exp)}
-                              className="p-1 rounded text-[#756758] hover:text-[#2c2620] hover:bg-[#eee6d4] transition"
-                              title="Editar experiência"
-                            >
-                              <Pencil className="h-3.5 w-3.5" />
-                            </button>
-                            <button
-                              onClick={() => handleDeleteItem('experience', idx)}
-                              className="p-1 rounded text-[#993333] hover:text-[#771111] hover:bg-[#fce8e8] transition"
-                              title="Excluir experiência"
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </button>
-                          </div>
+                          {exp.tags && exp.tags.length > 0 && (
+                            <div className="text-[11px] text-[#8c7f70] pt-1 flex flex-wrap gap-1">
+                              {exp.tags.slice(0, 6).map((t, i) => (
+                                <span key={i} className="bg-[#f0e9dc] px-2 py-0.5 rounded">{t}</span>
+                              ))}
+                            </div>
+                          )}
+                          {exp.raw_bullets && exp.raw_bullets.length > 0 && (
+                            <p className="text-[11px] text-[#5e5142] italic line-clamp-2 pt-0.5">
+                              "{exp.raw_bullets[0]}"
+                            </p>
+                          )}
                         </div>
-                        {exp.tags && exp.tags.length > 0 && (
-                          <div className="text-[11px] text-[#8c7f70] pt-1 flex flex-wrap gap-1">
-                            {exp.tags.slice(0, 6).map((t, i) => (
-                              <span key={i} className="bg-[#f0e9dc] px-2 py-0.5 rounded">{t}</span>
-                            ))}
-                          </div>
-                        )}
-                        {exp.raw_bullets && exp.raw_bullets.length > 0 && (
-                          <p className="text-[11px] text-[#5e5142] italic line-clamp-2 pt-0.5">
-                            "{exp.raw_bullets[0]}"
-                          </p>
-                        )}
+                      ))
+                    ) : (
+                      <div className="p-4 bg-[#fffdfa] rounded border border-[#dfd5be] text-xs text-[#756758] italic font-serif text-center">
+                        Nenhuma experiência cadastrada. Clique em "Nova Experiência" ou importe um currículo/LinkedIn em PDF.
                       </div>
-                    ))}
+                    )}
                   </div>
                 </div>
 
@@ -1265,40 +1285,46 @@ export default function App() {
                     </button>
                   </div>
                   <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
-                    {(profile.projects || []).map((proj, idx) => (
-                      <div key={idx} className="p-3 rounded border border-[#dfd5be] bg-[#fffdfa] text-xs space-y-1">
-                        <div className="flex justify-between items-start">
-                          <div>
-                            <span className="font-bold text-sm text-[#221c16] block">{proj.title}</span>
-                            {proj.subtitle && <span className="text-[#635749] text-xs">{proj.subtitle}</span>}
+                    {(profile.projects || []).length > 0 ? (
+                      profile.projects.map((proj, idx) => (
+                        <div key={idx} className="p-3 rounded border border-[#dfd5be] bg-[#fffdfa] text-xs space-y-1">
+                          <div className="flex justify-between items-start">
+                            <div>
+                              <span className="font-bold text-sm text-[#221c16] block">{proj.title}</span>
+                              {proj.subtitle && <span className="text-[#635749] text-xs">{proj.subtitle}</span>}
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <span className="text-[#756758] font-normal text-xs mr-1">{proj.period || proj.start_year || ''}</span>
+                              <button
+                                onClick={() => handleOpenEdit('project', idx, proj)}
+                                className="p-1 rounded text-[#756758] hover:text-[#2c2620] hover:bg-[#eee6d4] transition"
+                                title="Editar projeto"
+                              >
+                                <Pencil className="h-3.5 w-3.5" />
+                              </button>
+                              <button
+                                onClick={() => handleDeleteItem('project', idx)}
+                                className="p-1 rounded text-[#993333] hover:text-[#771111] hover:bg-[#fce8e8] transition"
+                                title="Excluir projeto"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
                           </div>
-                          <div className="flex items-center gap-1">
-                            <span className="text-[#756758] font-normal text-xs mr-1">{proj.period || proj.start_year || ''}</span>
-                            <button
-                              onClick={() => handleOpenEdit('project', idx, proj)}
-                              className="p-1 rounded text-[#756758] hover:text-[#2c2620] hover:bg-[#eee6d4] transition"
-                              title="Editar projeto"
-                            >
-                              <Pencil className="h-3.5 w-3.5" />
-                            </button>
-                            <button
-                              onClick={() => handleDeleteItem('project', idx)}
-                              className="p-1 rounded text-[#993333] hover:text-[#771111] hover:bg-[#fce8e8] transition"
-                              title="Excluir projeto"
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </button>
-                          </div>
+                          {proj.tags && proj.tags.length > 0 && (
+                            <div className="text-[11px] text-[#8c7f70] pt-1 flex flex-wrap gap-1">
+                              {proj.tags.slice(0, 6).map((t, i) => (
+                                <span key={i} className="bg-[#f0e9dc] px-2 py-0.5 rounded">{t}</span>
+                              ))}
+                            </div>
+                          )}
                         </div>
-                        {proj.tags && proj.tags.length > 0 && (
-                          <div className="text-[11px] text-[#8c7f70] pt-1 flex flex-wrap gap-1">
-                            {proj.tags.slice(0, 6).map((t, i) => (
-                              <span key={i} className="bg-[#f0e9dc] px-2 py-0.5 rounded">{t}</span>
-                            ))}
-                          </div>
-                        )}
+                      ))
+                    ) : (
+                      <div className="p-4 bg-[#fffdfa] rounded border border-[#dfd5be] text-xs text-[#756758] italic font-serif text-center">
+                        Nenhum projeto cadastrado. Clique em "Novo Projeto" ou importe repositórios do GitHub.
                       </div>
-                    ))}
+                    )}
                   </div>
                 </div>
 
@@ -1317,42 +1343,48 @@ export default function App() {
                     </button>
                   </div>
                   <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
-                    {(profile.awards_and_leadership || []).map((aw, idx) => (
-                      <div key={idx} className="p-2.5 rounded border border-[#dfd5be] bg-[#fffdfa] text-xs">
-                        <div className="flex justify-between items-start">
-                          <div>
-                            <span className="font-bold text-xs text-[#221c16] block">{aw.title}</span>
-                            {aw.description && <span className="text-[#635749] text-[11px] mt-0.5 block">{aw.description}</span>}
-                          </div>
-                          <div className="flex items-center gap-1 shrink-0 ml-2">
-                            <span className="text-[#756758] font-normal text-[11px] mr-1">{aw.period_or_date}</span>
-                            <button
-                              onClick={() => handleOpenEdit('award', idx, aw)}
-                              className="p-1 rounded text-[#756758] hover:text-[#2c2620] hover:bg-[#eee6d4] transition"
-                              title="Editar conquista"
-                            >
-                              <Pencil className="h-3.5 w-3.5" />
-                            </button>
-                            <button
-                              onClick={() => handleDeleteItem('award', idx)}
-                              className="p-1 rounded text-[#993333] hover:text-[#771111] hover:bg-[#fce8e8] transition"
-                              title="Excluir conquista"
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </button>
+                    {(profile.awards_and_leadership || []).length > 0 ? (
+                      profile.awards_and_leadership.map((aw, idx) => (
+                        <div key={idx} className="p-2.5 rounded border border-[#dfd5be] bg-[#fffdfa] text-xs">
+                          <div className="flex justify-between items-start">
+                            <div>
+                              <span className="font-bold text-xs text-[#221c16] block">{aw.title}</span>
+                              {aw.description && <span className="text-[#635749] text-[11px] mt-0.5 block">{aw.description}</span>}
+                            </div>
+                            <div className="flex items-center gap-1 shrink-0 ml-2">
+                              <span className="text-[#756758] font-normal text-[11px] mr-1">{aw.period_or_date}</span>
+                              <button
+                                onClick={() => handleOpenEdit('award', idx, aw)}
+                                className="p-1 rounded text-[#756758] hover:text-[#2c2620] hover:bg-[#eee6d4] transition"
+                                title="Editar conquista"
+                              >
+                                <Pencil className="h-3.5 w-3.5" />
+                              </button>
+                              <button
+                                onClick={() => handleDeleteItem('award', idx)}
+                                className="p-1 rounded text-[#993333] hover:text-[#771111] hover:bg-[#fce8e8] transition"
+                                title="Excluir conquista"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
                           </div>
                         </div>
+                      ))
+                    ) : (
+                      <div className="p-4 bg-[#fffdfa] rounded border border-[#dfd5be] text-xs text-[#756758] italic font-serif text-center">
+                        Nenhuma conquista cadastrada. Clique em "Nova Conquista" para adicionar.
                       </div>
-                    ))}
+                    )}
                   </div>
                 </div>
 
                 {/* Skills Section */}
-                {profile.skills && Object.keys(profile.skills).length > 0 && (
-                  <div className="space-y-2">
-                    <h4 className="text-xs font-sans font-bold text-[#5e5142] uppercase tracking-wider">
-                      Competências Registradas por Categoria
-                    </h4>
+                <div className="space-y-2">
+                  <h4 className="text-xs font-sans font-bold text-[#5e5142] uppercase tracking-wider">
+                    Competências Registradas por Categoria
+                  </h4>
+                  {profile.skills && Object.keys(profile.skills).length > 0 ? (
                     <div className="space-y-2">
                       {Object.entries(profile.skills).map(([category, items], idx) => (
                         <div key={idx} className="p-3 rounded border border-[#dfd5be] bg-[#fffdfa] text-xs space-y-1.5">
@@ -1369,8 +1401,12 @@ export default function App() {
                         </div>
                       ))}
                     </div>
-                  </div>
-                )}
+                  ) : (
+                    <div className="p-4 bg-[#fffdfa] rounded border border-[#dfd5be] text-xs text-[#756758] italic font-serif text-center">
+                      Nenhuma competência registrada. Importe um currículo em PDF para extrair habilidades automaticamente.
+                    </div>
+                  )}
+                </div>
               </div>
             )}
 
@@ -1788,7 +1824,7 @@ export default function App() {
                       type="text"
                       value={ghUsername}
                       onChange={(e) => setGhUsername(e.target.value)}
-                      placeholder="Usuário do GitHub (ex: ojoaosoares)"
+                      placeholder="Usuário do GitHub (ex: torvalds)"
                       className="flex-1 text-sm font-sans bg-[#fffdf9] border border-[#d6c9b1] rounded px-3.5 py-2 text-[#2c2620] focus:outline-none focus:border-[#8b5a2b]"
                     />
                     <button
