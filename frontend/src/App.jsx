@@ -79,6 +79,17 @@ Responsabilidades:
 - Modelagem estatística, benchmarks de performance e álgebra linear.`,
 };
 
+const isProfileEmpty = (p) => {
+  if (!p || typeof p !== 'object') return true;
+  const hasName = Boolean(p.personal?.name && p.personal.name.trim().length > 0);
+  const hasExps = Array.isArray(p.experiences) && p.experiences.length > 0;
+  const hasProjs = Array.isArray(p.projects) && p.projects.length > 0;
+  const hasAwards = Array.isArray(p.awards_and_leadership) && p.awards_and_leadership.length > 0;
+  const hasEdu = Array.isArray(p.education) && p.education.length > 0;
+  const hasSkills = p.skills && Object.keys(p.skills).length > 0;
+  return !hasName && !hasExps && !hasProjs && !hasAwards && !hasEdu && !hasSkills;
+};
+
 export default function App() {
   // Navigation & State
   const [activeTab, setActiveTab] = useState('job'); // 'job', 'profile', 'llm', 'ingest'
@@ -95,14 +106,11 @@ export default function App() {
       const cached = localStorage.getItem('curriculum_gen_active_profile');
       if (!cached) return null;
       const parsed = JSON.parse(cached);
-      if (parsed?.personal?.name === 'João Soares') {
-        localStorage.removeItem('curriculum_gen_active_profile');
-        return null;
-      }
-      return parsed;
+      if (parsed && typeof parsed === 'object') return parsed;
     } catch {
       return null;
     }
+    return null;
   });
   const [jobDescription, setJobDescription] = useState(
     () => localStorage.getItem('curriculum_gen_job_description') || PRESET_JOBS.systems
@@ -201,6 +209,16 @@ export default function App() {
   }, [visibleContacts]);
 
   useEffect(() => {
+    if (profile && !isProfileEmpty(profile)) {
+      try {
+        localStorage.setItem('curriculum_gen_active_profile', JSON.stringify(profile));
+      } catch (e) {
+        console.warn('Falha ao sincronizar perfil com localStorage:', e);
+      }
+    }
+  }, [profile]);
+
+  useEffect(() => {
     checkHealth();
     loadProfile();
     fetchTokenStats();
@@ -254,27 +272,70 @@ export default function App() {
     }
   };
 
+  const applyVisibleContacts = (data) => {
+    if (data?.personal?.visible_items) {
+      const rawItems = Array.isArray(data.personal.visible_items) ? data.personal.visible_items : [];
+      const cleanItems = rawItems
+        .map((c) => (typeof c === 'object' && c ? (c.key || c.id || String(c)) : String(c)))
+        .filter(Boolean);
+      if (cleanItems.length > 0) {
+        setVisibleContacts(cleanItems);
+      }
+    }
+  };
+
   const loadProfile = async () => {
+    let localProf = null;
+    try {
+      const cached = localStorage.getItem('curriculum_gen_active_profile');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (parsed && typeof parsed === 'object') {
+          localProf = parsed;
+        }
+      }
+    } catch (e) {
+      console.warn('Falha ao ler localStorage:', e);
+    }
+
     try {
       const res = await fetch('/api/profile');
       if (res.ok) {
-        const data = await res.json();
-        setProfile(data);
-        try {
-          localStorage.setItem('curriculum_gen_active_profile', JSON.stringify(data));
-        } catch {}
-        if (data.personal?.visible_items) {
-          const rawItems = Array.isArray(data.personal.visible_items) ? data.personal.visible_items : [];
-          const cleanItems = rawItems
-            .map((c) => (typeof c === 'object' && c ? (c.key || c.id || String(c)) : String(c)))
-            .filter(Boolean);
-          if (cleanItems.length > 0) {
-            setVisibleContacts(cleanItems);
-          }
+        const backendData = await res.json();
+        const backendEmpty = isProfileEmpty(backendData);
+        const localEmpty = isProfileEmpty(localProf);
+
+        if (!localEmpty && backendEmpty) {
+          // Local storage has the user's filled profile, but backend was empty.
+          // Preserve the user's local profile AND sync it to backend!
+          setProfile(localProf);
+          persistProfile(localProf).catch(() => {});
+          applyVisibleContacts(localProf);
+          return;
         }
+
+        if (!backendEmpty) {
+          setProfile(backendData);
+          try {
+            localStorage.setItem('curriculum_gen_active_profile', JSON.stringify(backendData));
+          } catch {}
+          applyVisibleContacts(backendData);
+          return;
+        }
+
+        // Both are empty
+        setProfile(backendData);
+        applyVisibleContacts(backendData);
+      } else if (localProf && !isProfileEmpty(localProf)) {
+        setProfile(localProf);
+        applyVisibleContacts(localProf);
       }
     } catch (err) {
       console.error('Falha ao carregar perfil:', err);
+      if (localProf && !isProfileEmpty(localProf)) {
+        setProfile(localProf);
+        applyVisibleContacts(localProf);
+      }
     }
   };
 
@@ -312,15 +373,9 @@ export default function App() {
         const prof = data.profile;
         setProfile(prof);
         try {
-          localStorage.setItem('curriculum_gen_active_profile', JSON.stringify(prof));
+          localStorage.removeItem('curriculum_gen_active_profile');
         } catch {}
-        if (prof.personal?.visible_items) {
-          const rawItems = Array.isArray(prof.personal.visible_items) ? prof.personal.visible_items : [];
-          const cleanItems = rawItems
-            .map((c) => (typeof c === 'object' && c ? (c.key || c.id || String(c)) : String(c)))
-            .filter(Boolean);
-          setVisibleContacts(cleanItems);
-        }
+        applyVisibleContacts(prof);
       }
     } catch (err) {
       console.error('Falha ao resetar perfil:', err);
@@ -709,6 +764,9 @@ export default function App() {
         max_awards: 2,
       };
 
+      // Ensure current active profile is preserved locally and on disk
+      persistProfile(payload.profile).catch(() => {});
+
       const res = await fetch('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -857,38 +915,70 @@ export default function App() {
   };
 
   const handleApplyPdfData = async (mode) => {
-    if (!pdfResult?.profile_data || !profile) return;
+    if (!pdfResult?.profile_data) return;
     const extracted = pdfResult.profile_data;
 
-    let updatedProfile = { ...profile };
+    const baseProfile = profile || {
+      personal: {},
+      education: [],
+      experiences: [],
+      projects: [],
+      awards_and_leadership: [],
+      skills: {},
+    };
+
+    let updatedProfile = { ...baseProfile };
 
     if (mode === 'replace') {
       updatedProfile = {
-        ...profile,
+        ...baseProfile,
         personal: {
-          ...profile.personal,
-          ...extracted.personal,
-          visible_items: profile.personal.visible_items,
+          ...baseProfile.personal,
+          name: extracted.personal?.name || baseProfile.personal?.name || '',
+          location: extracted.personal?.location || baseProfile.personal?.location,
+          email: extracted.personal?.email || baseProfile.personal?.email,
+          phone: extracted.personal?.phone || baseProfile.personal?.phone,
+          linkedin: extracted.personal?.linkedin || baseProfile.personal?.linkedin,
+          github: extracted.personal?.github || baseProfile.personal?.github,
+          website: extracted.personal?.website || baseProfile.personal?.website,
+          visible_items: baseProfile.personal?.visible_items || [
+            'location',
+            'email',
+            'phone',
+            'linkedin',
+            'github',
+            'lattes',
+          ],
         },
-        education: extracted.education?.length ? extracted.education : profile.education,
-        experiences: extracted.experiences?.length ? extracted.experiences : profile.experiences,
-        skills: Object.keys(extracted.skills || {}).length ? extracted.skills : profile.skills,
-        awards_and_leadership: extracted.awards_and_leadership?.length ? extracted.awards_and_leadership : profile.awards_and_leadership,
+        education: extracted.education?.length ? extracted.education : baseProfile.education || [],
+        experiences: extracted.experiences?.length ? extracted.experiences : baseProfile.experiences || [],
+        projects: extracted.projects?.length ? extracted.projects : baseProfile.projects || [],
+        skills: Object.keys(extracted.skills || {}).length ? extracted.skills : baseProfile.skills || {},
+        awards_and_leadership: extracted.awards_and_leadership?.length
+          ? extracted.awards_and_leadership
+          : baseProfile.awards_and_leadership || [],
       };
     } else if (mode === 'merge') {
       const existingExpKeys = new Set(
-        (profile.experiences || []).map((e) => `${(e.company || '').toLowerCase()}::${(e.role || '').toLowerCase()}`)
+        (baseProfile.experiences || []).map((e) => `${(e.company || '').toLowerCase()}::${(e.role || '').toLowerCase()}`)
       );
       const newExps = (extracted.experiences || []).filter(
         (e) => !existingExpKeys.has(`${(e.company || '').toLowerCase()}::${(e.role || '').toLowerCase()}`)
       );
 
-      const existingEduInsts = new Set((profile.education || []).map((e) => (e.institution || '').toLowerCase()));
+      const existingProjTitles = new Set(
+        (baseProfile.projects || []).map((p) => (p.title || '').toLowerCase())
+      );
+      const newProjects = (extracted.projects || []).filter(
+        (p) => !existingProjTitles.has((p.title || '').toLowerCase())
+      );
+
+      const existingEduInsts = new Set((baseProfile.education || []).map((e) => (e.institution || '').toLowerCase()));
       const newEdu = (extracted.education || []).filter(
         (e) => !existingEduInsts.has((e.institution || '').toLowerCase())
       );
 
-      const mergedSkills = { ...profile.skills };
+      const mergedSkills = { ...(baseProfile.skills || {}) };
       for (const [cat, skillList] of Object.entries(extracted.skills || {})) {
         if (Array.isArray(skillList)) {
           if (mergedSkills[cat] && Array.isArray(mergedSkills[cat])) {
@@ -900,33 +990,40 @@ export default function App() {
         }
       }
 
-      const existingAwardTitles = new Set((profile.awards_and_leadership || []).map((a) => (a.title || '').toLowerCase()));
+      const existingAwardTitles = new Set(
+        (baseProfile.awards_and_leadership || []).map((a) => (a.title || '').toLowerCase())
+      );
       const newAwards = (extracted.awards_and_leadership || []).filter(
         (a) => !existingAwardTitles.has((a.title || '').toLowerCase())
       );
 
       updatedProfile = {
-        ...profile,
+        ...baseProfile,
         personal: {
-          ...profile.personal,
-          location: profile.personal.location || extracted.personal?.location,
-          linkedin: profile.personal.linkedin || extracted.personal?.linkedin,
-          github: profile.personal.github || extracted.personal?.github,
+          ...baseProfile.personal,
+          name: extracted.personal?.name || baseProfile.personal?.name || '',
+          location: extracted.personal?.location || baseProfile.personal?.location,
+          email: extracted.personal?.email || baseProfile.personal?.email,
+          phone: extracted.personal?.phone || baseProfile.personal?.phone,
+          linkedin: extracted.personal?.linkedin || baseProfile.personal?.linkedin,
+          github: extracted.personal?.github || baseProfile.personal?.github,
         },
-        experiences: [...(profile.experiences || []), ...newExps],
-        education: [...(profile.education || []), ...newEdu],
+        experiences: [...(baseProfile.experiences || []), ...newExps],
+        projects: [...(baseProfile.projects || []), ...newProjects],
+        education: [...(baseProfile.education || []), ...newEdu],
         skills: mergedSkills,
-        awards_and_leadership: [...(profile.awards_and_leadership || []), ...newAwards],
+        awards_and_leadership: [...(baseProfile.awards_and_leadership || []), ...newAwards],
       };
     }
 
     setProfile(updatedProfile);
     try {
+      localStorage.setItem('curriculum_gen_active_profile', JSON.stringify(updatedProfile));
       await persistProfile(updatedProfile);
       setPdfMessage(
         mode === 'merge'
-          ? 'Dados mesclados ao perfil ativo e salvos com sucesso!'
-          : 'Perfil substituído e salvo com os dados do currículo/LinkedIn!'
+          ? 'Dados mesclados ao perfil ativo e salvos localmente e no servidor!'
+          : 'Perfil substituído e salvo localmente e no servidor com os dados do currículo/LinkedIn!'
       );
       setPdfResult(null);
       setPdfFile(null);

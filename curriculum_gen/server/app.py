@@ -132,6 +132,15 @@ def generate_resume(req: GenerateRequest):
             for c in req.visible_contacts
         ]
 
+    # Auto-persist non-empty profile to active_profile.yaml so it survives restarts/refreshes
+    if profile.personal.name or profile.experiences or profile.projects or profile.awards_and_leadership:
+        try:
+            path = get_active_profile_path(for_write=True)
+            with open(path, "w", encoding="utf-8") as f:
+                yaml.dump(profile.model_dump(), f, sort_keys=False, allow_unicode=True)
+        except Exception as e:
+            print(f"[CurriculumGen Server] Failed to auto-persist profile on generate: {e}")
+
     job_context = JobContext(
         job_description=req.job_description,
         language=req.language,
