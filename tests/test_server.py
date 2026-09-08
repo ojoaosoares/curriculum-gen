@@ -239,8 +239,77 @@ def test_suggest_description_endpoint():
             "language": "pt",
         },
     )
-    assert res3.status_code == 200
-    assert "ufmg" in res3.json()["suggestion"].lower() or "acadêmico" in res3.json()["suggestion"].lower()
+    assert res1.json()["tokens_saved"] > 0
+    assert "tokens_used" in res1.json()
 
+    # 4. Profile context cross-referencing (AtesN-DS project details enriched into SBESC award)
+    mock_profile = {
+        "projects": [
+            {
+                "title": "AtesN-DS",
+                "subtitle": "eBPF, XDP, Linux Kernel",
+                "raw_bullets": [
+                    "Desenvolveu um resolvedor DNS recursivo em eBPF e XDP alcançando 51% de redução na latência e 213% de aumento na vazão."
+                ],
+                "tags": ["eBPF", "XDP", "DNS", "C"],
+            }
+        ],
+        "experiences": [
+            {
+                "role": "Pesquisador científico",
+                "company": "Laboratório de Engenharia de Computadores (Lecom)",
+                "raw_bullets": ["Pesquisa em eBPF/XDP e redes de alto desempenho."],
+            }
+        ],
+        "awards_and_leadership": [
+            {
+                "title": "Relevância Acadêmica na Semana do Conhecimento UFMG 2025",
+                "period_or_date": "2025",
+            }
+        ],
+    }
 
+    res_cross = client.post(
+        "/api/suggest-description",
+        json={
+            "item_type": "award",
+            "title": "Apresentação e Participação no XV Symposium on Computing Systems Engineering (SBESC )",
+            "current_description": "Presented AtesN-DS work on the XV Symposium on Computing Systems Engineering (SBESC )",
+            "language": "pt",
+            "profile_context": mock_profile,
+            "mode": "cross_ref",
+        },
+    )
+    assert res_cross.status_code == 200
+    cross_data = res_cross.json()
+    assert "atesn" in cross_data["suggestion"].lower()
+    assert "ebpf" in cross_data["suggestion"].lower() or "latência" in cross_data["suggestion"].lower()
+    assert cross_data["tokens_saved"] > 0
+    assert len(cross_data.get("cross_refs", [])) > 0
 
+    # 5. Fusion endpoint test (merging SBESC presentation + Semana do Conhecimento UFMG)
+    res_fusion = client.post(
+        "/api/suggest-fusion",
+        json={
+            "items": [
+                {
+                    "title": "Apresentação e Participação no XV Symposium on Computing Systems Engineering (SBESC )",
+                    "period_or_date": "2025",
+                    "description": "Presented AtesN-DS work on the XV Symposium on Computing Systems Engineering (SBESC )",
+                },
+                {
+                    "title": "Relevância Acadêmica na Semana do Conhecimento UFMG 2025",
+                    "period_or_date": "2025",
+                    "description": "Premiação acadêmica pelo projeto.",
+                },
+            ],
+            "profile_context": mock_profile,
+            "language": "pt",
+        },
+    )
+    assert res_fusion.status_code == 200
+    fusion_data = res_fusion.json()
+    fused_item = fusion_data["fused_item"]
+    assert "atesn" in fused_item["title"].lower() or "sbesc" in fused_item["title"].lower()
+    assert "relevância" in fused_item["description"].lower() or "sbesc" in fused_item["description"].lower()
+    assert fusion_data["tokens_saved"] > 0

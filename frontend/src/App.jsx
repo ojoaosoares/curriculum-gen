@@ -29,6 +29,7 @@ import {
   Award,
   AlertTriangle,
   Edit3,
+  GitMerge,
 } from 'lucide-react';
 
 const extractErrorMessage = (errData, defaultMsg = 'Ocorreu um erro na operação.') => {
@@ -169,6 +170,13 @@ export default function App() {
   // Profile Item Editor Modal State
   const [editingItem, setEditingItem] = useState(null);
   const [isSuggesting, setIsSuggesting] = useState(false);
+  const [aiSuggestionState, setAiSuggestionState] = useState(null);
+
+  // Awards Fusion Modal State
+  const [fusionModalOpen, setFusionModalOpen] = useState(false);
+  const [fusionSelectedAwardIndices, setFusionSelectedAwardIndices] = useState([]);
+  const [isFusing, setIsFusing] = useState(false);
+  const [fusedResult, setFusedResult] = useState(null);
 
   useEffect(() => {
     if (apiKey) {
@@ -383,6 +391,7 @@ export default function App() {
   };
 
   const handleOpenAdd = (type) => {
+    setAiSuggestionState(null);
     if (type === 'experience') {
       setEditingItem({
         type,
@@ -405,6 +414,7 @@ export default function App() {
   };
 
   const handleOpenEdit = (type, index, item) => {
+    setAiSuggestionState(null);
     if (type === 'personal') {
       setEditingItem({
         type,
@@ -478,9 +488,17 @@ export default function App() {
     }
   };
 
-  const handleSuggestDescription = async (itemType, title, subtitleOrOrg, currentDesc) => {
-    if (!title && !subtitleOrOrg) return;
+  const handleSuggestDescription = async (
+    itemType,
+    title,
+    subtitleOrOrg,
+    currentDesc,
+    mode = 'generate',
+    targetProjectId = null
+  ) => {
+    if (!title && !subtitleOrOrg && !currentDesc) return;
     setIsSuggesting(true);
+    setAiSuggestionState(null);
     try {
       const res = await fetch('/api/suggest-description', {
         method: 'POST',
@@ -492,6 +510,9 @@ export default function App() {
           current_description: currentDesc || '',
           job_description: jobDescription || '',
           language: language || 'pt',
+          profile_context: profile,
+          mode: mode,
+          target_project_id_or_title: targetProjectId || null,
           api_key: apiKey || null,
           provider: provider || null,
           model: model || null,
@@ -499,22 +520,20 @@ export default function App() {
       });
       if (res.ok) {
         const data = await res.json();
-        if (data.suggestion) {
-          if (itemType === 'award') {
-            setEditingItem((prev) => ({
-              ...prev,
-              form: { ...prev.form, description: data.suggestion },
-            }));
-          } else {
-            setEditingItem((prev) => {
-              const prevBullets = prev.form.raw_bullets ? prev.form.raw_bullets.trim() : '';
-              const newBullets = prevBullets ? `${prevBullets}\n${data.suggestion}` : data.suggestion;
-              return {
-                ...prev,
-                form: { ...prev.form, raw_bullets: newBullets },
-              };
-            });
-          }
+        if (data.suggestion || data.text) {
+          const suggestedText = data.suggestion || data.text;
+          setAiSuggestionState({
+            text: suggestedText,
+            tokens_used: data.tokens_used || 0,
+            tokens_saved: data.tokens_saved || 0,
+            provider: data.provider || 'offline_heuristic',
+            strategy: data.strategy || 'Síntese Contextual',
+            mode: mode,
+            cross_refs: data.cross_refs || [],
+            itemType: itemType,
+          });
+          // Update live telemetry counters immediately
+          fetchTokenStats();
         }
       }
     } catch (err) {
@@ -522,6 +541,134 @@ export default function App() {
     } finally {
       setIsSuggesting(false);
     }
+  };
+
+  const handleApplyAiSuggestion = (applyMode = 'replace') => {
+    if (!aiSuggestionState?.text || !editingItem) return;
+    const { itemType, text } = aiSuggestionState;
+
+    if (itemType === 'award') {
+      setEditingItem((prev) => ({
+        ...prev,
+        form: {
+          ...prev.form,
+          description:
+            applyMode === 'append' && prev.form.description
+              ? `${prev.form.description} ${text}`
+              : text,
+        },
+      }));
+    } else {
+      setEditingItem((prev) => {
+        const prevBullets = prev.form.raw_bullets ? prev.form.raw_bullets.trim() : '';
+        const newBullets =
+          applyMode === 'append' && prevBullets ? `${prevBullets}\n${text}` : text;
+        return {
+          ...prev,
+          form: { ...prev.form, raw_bullets: newBullets },
+        };
+      });
+    }
+    setAiSuggestionState(null);
+  };
+
+  const handleDismissAiSuggestion = () => {
+    setAiSuggestionState(null);
+  };
+
+  const handleOpenFusionModal = () => {
+    const awards = profile?.awards_and_leadership || [];
+    if (awards.length < 2) return;
+    const preselected = [];
+    awards.forEach((aw, idx) => {
+      const t = (aw.title || '').toLowerCase();
+      if (
+        t.includes('sbesc') ||
+        t.includes('symposium') ||
+        t.includes('ufmg') ||
+        t.includes('conhecimento') ||
+        t.includes('atesn')
+      ) {
+        preselected.push(idx);
+      }
+    });
+    setFusionSelectedAwardIndices(preselected.length >= 2 ? preselected : [0, 1]);
+    setFusedResult(null);
+    setFusionModalOpen(true);
+  };
+
+  const handleToggleFusionAward = (idx) => {
+    setFusionSelectedAwardIndices((prev) =>
+      prev.includes(idx) ? prev.filter((i) => i !== idx) : [...prev, idx]
+    );
+  };
+
+  const handleRunFusion = async () => {
+    const awards = profile?.awards_and_leadership || [];
+    const selectedItems = fusionSelectedAwardIndices.map((i) => awards[i]).filter(Boolean);
+    if (selectedItems.length < 2) return;
+
+    setIsFusing(true);
+    try {
+      const res = await fetch('/api/suggest-fusion', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          items: selectedItems,
+          profile_context: profile,
+          language: language || 'pt',
+          job_description: jobDescription || '',
+          api_key: apiKey || null,
+          provider: provider || null,
+          model: model || null,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setFusedResult(data);
+        fetchTokenStats();
+      }
+    } catch (err) {
+      console.error('Erro ao sintetizar fusão:', err);
+    } finally {
+      setIsFusing(false);
+    }
+  };
+
+  const handleApplyFusion = async () => {
+    if (!fusedResult?.fused_item || !profile) return;
+    const { title, period_or_date, description } = fusedResult.fused_item;
+    const currentAwards = [...(profile.awards_and_leadership || [])];
+
+    const remainingAwards = currentAwards.filter(
+      (_, idx) => !fusionSelectedAwardIndices.includes(idx)
+    );
+
+    const fusedEntry = {
+      id: `award-fused-${Date.now()}`,
+      title: title || 'Apresentações & Distinções Científicas',
+      period_or_date: period_or_date || '2025',
+      description: description || '',
+      score: 0.0,
+    };
+
+    const insertIdx = Math.min(...fusionSelectedAwardIndices, 0);
+    remainingAwards.splice(insertIdx, 0, fusedEntry);
+
+    const updatedProfile = {
+      ...profile,
+      awards_and_leadership: remainingAwards,
+    };
+
+    setProfile(updatedProfile);
+    try {
+      localStorage.setItem('curriculum_gen_active_profile', JSON.stringify(updatedProfile));
+      await persistProfile(updatedProfile);
+    } catch {}
+
+    setFusionModalOpen(false);
+    setFusedResult(null);
+    setFusionSelectedAwardIndices([]);
   };
 
   const handleSaveItem = async (e) => {
@@ -1516,13 +1663,26 @@ export default function App() {
                     <h4 className="text-xs font-sans font-bold text-[#5e5142] uppercase tracking-wider">
                       Conquistas & Certificações ({profile.awards_and_leadership?.length || 0})
                     </h4>
-                    <button
-                      onClick={() => handleOpenAdd('award')}
-                      className="text-xs font-sans font-medium text-[#206634] hover:text-[#144221] bg-[#eef8f0] border border-[#a2d8b0] px-2.5 py-1 rounded flex items-center gap-1 transition"
-                    >
-                      <Plus className="h-3.5 w-3.5" />
-                      <span>Nova Conquista</span>
-                    </button>
+                    <div className="flex items-center gap-1.5">
+                      {(profile.awards_and_leadership || []).length >= 2 && (
+                        <button
+                          type="button"
+                          onClick={handleOpenFusionModal}
+                          className="text-xs font-sans font-medium text-[#8b5a2b] hover:text-[#5c3c1a] bg-[#f8f1e3] border border-[#e2d0b6] px-2.5 py-1 rounded flex items-center gap-1 transition shadow-2xs"
+                          title="Fundir 2 ou mais conquistas relacionadas em uma única entrada com IA"
+                        >
+                          <GitMerge className="h-3.5 w-3.5" />
+                          <span>Fundir Conquistas</span>
+                        </button>
+                      )}
+                      <button
+                        onClick={() => handleOpenAdd('award')}
+                        className="text-xs font-sans font-medium text-[#206634] hover:text-[#144221] bg-[#eef8f0] border border-[#a2d8b0] px-2.5 py-1 rounded flex items-center gap-1 transition"
+                      >
+                        <Plus className="h-3.5 w-3.5" />
+                        <span>Nova Conquista</span>
+                      </button>
+                    </div>
                   </div>
                   <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
                     {(profile.awards_and_leadership || []).length > 0 ? (
@@ -3130,26 +3290,70 @@ export default function App() {
                     />
                   </div>
                   <div>
-                    <div className="flex items-center justify-between mb-1">
+                    <div className="flex items-center justify-between mb-1.5">
                       <label className="block text-[11px] font-bold text-[#5e5142] uppercase">
                         Bullets de Impacto (um por linha)
                       </label>
-                      <button
-                        type="button"
-                        disabled={isSuggesting}
-                        onClick={() =>
-                          handleSuggestDescription(
-                            'experience',
-                            `${editingItem.form.role} @ ${editingItem.form.company}`,
-                            editingItem.form.location,
-                            editingItem.form.raw_bullets
-                          )
-                        }
-                        className="text-[11px] font-sans font-bold text-[#8b5a2b] hover:text-[#5c3c1a] bg-[#f8f1e3] border border-[#e2d0b6] px-2 py-0.5 rounded flex items-center gap-1 transition disabled:opacity-50"
-                      >
-                        <Sparkles className="h-3 w-3" />
-                        <span>{isSuggesting ? 'Sugerindo...' : 'Sugerir com IA'}</span>
-                      </button>
+                      <div className="flex items-center gap-1">
+                        {editingItem.form.raw_bullets && editingItem.form.raw_bullets.trim().length > 0 ? (
+                          <>
+                            <button
+                              type="button"
+                              disabled={isSuggesting}
+                              onClick={() =>
+                                handleSuggestDescription(
+                                  'experience',
+                                  `${editingItem.form.role} @ ${editingItem.form.company}`,
+                                  editingItem.form.location,
+                                  editingItem.form.raw_bullets,
+                                  'improve'
+                                )
+                              }
+                              className="text-[11px] font-sans font-bold text-[#8b5a2b] hover:text-[#5c3c1a] bg-[#f8f1e3] border border-[#e2d0b6] px-2 py-0.5 rounded flex items-center gap-1 transition disabled:opacity-50"
+                              title="Refina os bullets atuais para frases completas de alto impacto"
+                            >
+                              <Sparkles className="h-3 w-3" />
+                              <span>{isSuggesting ? 'Processando...' : 'Melhorar Texto'}</span>
+                            </button>
+                            <button
+                              type="button"
+                              disabled={isSuggesting}
+                              onClick={() =>
+                                handleSuggestDescription(
+                                  'experience',
+                                  `${editingItem.form.role} @ ${editingItem.form.company}`,
+                                  editingItem.form.location,
+                                  editingItem.form.raw_bullets,
+                                  'cross_ref'
+                                )
+                              }
+                              className="text-[11px] font-sans font-bold text-[#206634] hover:text-[#144221] bg-[#eef8f0] border border-[#a2d8b0] px-2 py-0.5 rounded flex items-center gap-1 transition disabled:opacity-50"
+                              title="Cruza detalhes com projetos e métricas do perfil"
+                            >
+                              <BookOpen className="h-3 w-3" />
+                              <span>Enriquecer c/ Projetos</span>
+                            </button>
+                          </>
+                        ) : (
+                          <button
+                            type="button"
+                            disabled={isSuggesting}
+                            onClick={() =>
+                              handleSuggestDescription(
+                                'experience',
+                                `${editingItem.form.role} @ ${editingItem.form.company}`,
+                                editingItem.form.location,
+                                '',
+                                'generate'
+                              )
+                            }
+                            className="text-[11px] font-sans font-bold text-[#8b5a2b] hover:text-[#5c3c1a] bg-[#f8f1e3] border border-[#e2d0b6] px-2 py-0.5 rounded flex items-center gap-1 transition disabled:opacity-50"
+                          >
+                            <Sparkles className="h-3 w-3" />
+                            <span>{isSuggesting ? 'Sugerindo...' : 'Sugerir Bullets IA'}</span>
+                          </button>
+                        )}
+                      </div>
                     </div>
                     <textarea
                       rows={4}
@@ -3210,26 +3414,70 @@ export default function App() {
                     </div>
                   </div>
                   <div>
-                    <div className="flex items-center justify-between mb-1">
+                    <div className="flex items-center justify-between mb-1.5">
                       <label className="block text-[11px] font-bold text-[#5e5142] uppercase">
                         Bullets de Descrição & Métricas (um por linha)
                       </label>
-                      <button
-                        type="button"
-                        disabled={isSuggesting}
-                        onClick={() =>
-                          handleSuggestDescription(
-                            'project',
-                            editingItem.form.title,
-                            editingItem.form.subtitle,
-                            editingItem.form.raw_bullets
-                          )
-                        }
-                        className="text-[11px] font-sans font-bold text-[#8b5a2b] hover:text-[#5c3c1a] bg-[#f8f1e3] border border-[#e2d0b6] px-2 py-0.5 rounded flex items-center gap-1 transition disabled:opacity-50"
-                      >
-                        <Sparkles className="h-3 w-3" />
-                        <span>{isSuggesting ? 'Sugerindo...' : 'Sugerir com IA'}</span>
-                      </button>
+                      <div className="flex items-center gap-1">
+                        {editingItem.form.raw_bullets && editingItem.form.raw_bullets.trim().length > 0 ? (
+                          <>
+                            <button
+                              type="button"
+                              disabled={isSuggesting}
+                              onClick={() =>
+                                handleSuggestDescription(
+                                  'project',
+                                  editingItem.form.title,
+                                  editingItem.form.subtitle,
+                                  editingItem.form.raw_bullets,
+                                  'improve'
+                                )
+                              }
+                              className="text-[11px] font-sans font-bold text-[#8b5a2b] hover:text-[#5c3c1a] bg-[#f8f1e3] border border-[#e2d0b6] px-2 py-0.5 rounded flex items-center gap-1 transition disabled:opacity-50"
+                              title="Refina os bullets atuais transformando em frases completas e autoritativas"
+                            >
+                              <Sparkles className="h-3 w-3" />
+                              <span>{isSuggesting ? 'Processando...' : 'Melhorar Texto'}</span>
+                            </button>
+                            <button
+                              type="button"
+                              disabled={isSuggesting}
+                              onClick={() =>
+                                handleSuggestDescription(
+                                  'project',
+                                  editingItem.form.title,
+                                  editingItem.form.subtitle,
+                                  editingItem.form.raw_bullets,
+                                  'cross_ref'
+                                )
+                              }
+                              className="text-[11px] font-sans font-bold text-[#206634] hover:text-[#144221] bg-[#eef8f0] border border-[#a2d8b0] px-2 py-0.5 rounded flex items-center gap-1 transition disabled:opacity-50"
+                              title="Enriquece com outras pesquisas e publicações do perfil"
+                            >
+                              <BookOpen className="h-3 w-3" />
+                              <span>Enriquecer c/ Perfil</span>
+                            </button>
+                          </>
+                        ) : (
+                          <button
+                            type="button"
+                            disabled={isSuggesting}
+                            onClick={() =>
+                              handleSuggestDescription(
+                                'project',
+                                editingItem.form.title,
+                                editingItem.form.subtitle,
+                                '',
+                                'generate'
+                              )
+                            }
+                            className="text-[11px] font-sans font-bold text-[#8b5a2b] hover:text-[#5c3c1a] bg-[#f8f1e3] border border-[#e2d0b6] px-2 py-0.5 rounded flex items-center gap-1 transition disabled:opacity-50"
+                          >
+                            <Sparkles className="h-3 w-3" />
+                            <span>{isSuggesting ? 'Sugerindo...' : 'Sugerir Bullets IA'}</span>
+                          </button>
+                        )}
+                      </div>
                     </div>
                     <textarea
                       rows={3}
@@ -3266,36 +3514,167 @@ export default function App() {
                     />
                   </div>
                   <div>
-                    <div className="flex items-center justify-between mb-1">
+                    <div className="flex items-center justify-between mb-1.5">
                       <label className="block text-[11px] font-bold text-[#5e5142] uppercase">
                         Descrição / Detalhes
                       </label>
-                      <button
-                        type="button"
-                        disabled={isSuggesting}
-                        onClick={() =>
-                          handleSuggestDescription(
-                            'award',
-                            editingItem.form.title,
-                            editingItem.form.period_or_date,
-                            editingItem.form.description
-                          )
-                        }
-                        className="text-[11px] font-sans font-bold text-[#8b5a2b] hover:text-[#5c3c1a] bg-[#f8f1e3] border border-[#e2d0b6] px-2 py-0.5 rounded flex items-center gap-1 transition disabled:opacity-50"
-                      >
-                        <Sparkles className="h-3 w-3" />
-                        <span>{isSuggesting ? 'Sugerindo...' : 'Sugerir com IA'}</span>
-                      </button>
+                      <div className="flex items-center gap-1">
+                        {editingItem.form.description && editingItem.form.description.trim().length > 0 ? (
+                          <>
+                            <button
+                              type="button"
+                              disabled={isSuggesting}
+                              onClick={() =>
+                                handleSuggestDescription(
+                                  'award',
+                                  editingItem.form.title,
+                                  editingItem.form.period_or_date,
+                                  editingItem.form.description,
+                                  'improve'
+                                )
+                              }
+                              className="text-[11px] font-sans font-bold text-[#8b5a2b] hover:text-[#5c3c1a] bg-[#f8f1e3] border border-[#e2d0b6] px-2 py-0.5 rounded flex items-center gap-1 transition disabled:opacity-50"
+                              title="Refina o texto atual transformando em frases completas e autoritativas"
+                            >
+                              <Sparkles className="h-3 w-3" />
+                              <span>{isSuggesting ? 'Processando...' : 'Melhorar Texto'}</span>
+                            </button>
+                            <button
+                              type="button"
+                              disabled={isSuggesting}
+                              onClick={() =>
+                                handleSuggestDescription(
+                                  'award',
+                                  editingItem.form.title,
+                                  editingItem.form.period_or_date,
+                                  editingItem.form.description,
+                                  'cross_ref'
+                                )
+                              }
+                              className="text-[11px] font-sans font-bold text-[#206634] hover:text-[#144221] bg-[#eef8f0] border border-[#a2d8b0] px-2 py-0.5 rounded flex items-center gap-1 transition disabled:opacity-50"
+                              title="Enriquece a conquista com métricas reais dos seus projetos (ex: AtesN-DS, eBPF, 51% latência)"
+                            >
+                              <BookOpen className="h-3 w-3" />
+                              <span>Enriquecer c/ Projetos</span>
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              disabled={isSuggesting}
+                              onClick={() =>
+                                handleSuggestDescription(
+                                  'award',
+                                  editingItem.form.title,
+                                  editingItem.form.period_or_date,
+                                  '',
+                                  'generate'
+                                )
+                              }
+                              className="text-[11px] font-sans font-bold text-[#8b5a2b] hover:text-[#5c3c1a] bg-[#f8f1e3] border border-[#e2d0b6] px-2 py-0.5 rounded flex items-center gap-1 transition disabled:opacity-50"
+                            >
+                              <Sparkles className="h-3 w-3" />
+                              <span>{isSuggesting ? 'Sugerindo...' : 'Sugerir com IA'}</span>
+                            </button>
+                            <button
+                              type="button"
+                              disabled={isSuggesting}
+                              onClick={() =>
+                                handleSuggestDescription(
+                                  'award',
+                                  editingItem.form.title,
+                                  editingItem.form.period_or_date,
+                                  '',
+                                  'cross_ref'
+                                )
+                              }
+                              className="text-[11px] font-sans font-bold text-[#206634] hover:text-[#144221] bg-[#eef8f0] border border-[#a2d8b0] px-2 py-0.5 rounded flex items-center gap-1 transition disabled:opacity-50"
+                              title="Sintetiza usando detalhes do projeto relacionado (ex: AtesN-DS)"
+                            >
+                              <BookOpen className="h-3 w-3" />
+                              <span>Vincular ao Projeto</span>
+                            </button>
+                          </>
+                        )}
+                      </div>
                     </div>
                     <textarea
                       rows={2}
                       value={editingItem.form.description || ''}
                       onChange={(e) => setEditingItem({ ...editingItem, form: { ...editingItem.form, description: e.target.value } })}
-                      placeholder="Ex: Premiado pelo Departamento de Ciência da Computação..."
+                      placeholder="Ex: Apresentação técnica do projeto AtesN-DS ou premiação acadêmica..."
                       className="w-full bg-[#fffdfa] border border-[#d8ccb4] rounded p-2 text-xs text-[#2c2620] resize-y"
                     />
                   </div>
                 </>
+              )}
+
+              {/* Inline AI Suggestion Preview with Token Accountability */}
+              {aiSuggestionState && (
+                <div className="p-3 bg-[#fdfcf9] border border-[#c4a478] rounded-md shadow-xs space-y-2 animate-fadeIn">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5">
+                      <Sparkles className="h-3.5 w-3.5 text-[#8b5a2b]" />
+                      <span className="text-[11px] font-bold uppercase text-[#5e5142]">
+                        Sugestão da IA ({aiSuggestionState.mode === 'improve' ? 'Texto Melhorado' : aiSuggestionState.mode === 'cross_ref' ? 'Enriquecido c/ Perfil' : 'Nova Descrição'})
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {aiSuggestionState.tokens_saved > 0 ? (
+                        <span className="text-[10px] font-mono bg-[#eef8f0] text-[#1c6434] border border-[#a2d8b0] px-2 py-0.5 rounded flex items-center gap-1 font-semibold">
+                          <Zap className="h-2.5 w-2.5" />
+                          {aiSuggestionState.tokens_saved} tokens poupados ({aiSuggestionState.provider === 'offline_heuristic' ? 'IA Offline' : 'LLM'})
+                        </span>
+                      ) : (
+                        <span className="text-[10px] font-mono bg-[#fdf5eb] text-[#8b5a2b] border border-[#f0d4b8] px-2 py-0.5 rounded flex items-center gap-1 font-semibold">
+                          <Sparkles className="h-2.5 w-2.5" />
+                          {aiSuggestionState.tokens_used} tokens consumidos
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {aiSuggestionState.cross_refs && aiSuggestionState.cross_refs.length > 0 && (
+                    <div className="text-[10px] text-[#6b583f] bg-[#f7f2e7] px-2 py-1 rounded flex items-center gap-1.5">
+                      <BookOpen className="h-3 w-3 text-[#8b5a2b] shrink-0" />
+                      <span className="truncate">
+                        Fatos e métricas cruzados de: <strong>{aiSuggestionState.cross_refs.map((r) => r.title).join(', ')}</strong>
+                      </span>
+                    </div>
+                  )}
+
+                  <div className="p-2.5 bg-white rounded border border-[#dfd5be] text-xs text-[#2c2620] leading-relaxed whitespace-pre-line font-serif">
+                    {aiSuggestionState.text}
+                  </div>
+
+                  <div className="flex items-center justify-end gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={handleDismissAiSuggestion}
+                      className="px-2.5 py-1 text-[11px] text-[#756758] hover:text-[#2c2620] hover:bg-[#ede5d2] rounded transition"
+                    >
+                      Descartar
+                    </button>
+                    {editingItem.type !== 'award' && (
+                      <button
+                        type="button"
+                        onClick={() => handleApplyAiSuggestion('append')}
+                        className="px-2.5 py-1 text-[11px] font-semibold text-[#8b5a2b] bg-[#f8f1e3] border border-[#e2d0b6] hover:bg-[#ebd9c1] rounded transition"
+                      >
+                        + Anexar ao Final
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => handleApplyAiSuggestion('replace')}
+                      className="px-3 py-1 text-[11px] font-semibold text-[#f7f3e8] bg-[#206634] hover:bg-[#164b25] rounded transition shadow-xs flex items-center gap-1"
+                    >
+                      <Check className="h-3 w-3" />
+                      <span>Aplicar Sugestão</span>
+                    </button>
+                  </div>
+                </div>
               )}
 
               <div className="flex items-center justify-end gap-2 pt-3 border-t border-[#ded5bf]">
@@ -3314,6 +3693,172 @@ export default function App() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Fusão de Conquistas */}
+      {fusionModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4 overflow-y-auto">
+          <div className="bg-[#fcfaf7] border border-[#c4a478] rounded-lg shadow-xl max-w-xl w-full p-5 space-y-4 my-8 animate-scaleIn">
+            <div className="flex items-center justify-between border-b border-[#ded5bf] pb-3">
+              <div className="flex items-center gap-2">
+                <GitMerge className="h-5 w-5 text-[#8b5a2b]" />
+                <div>
+                  <h3 className="font-bold text-sm text-[#2c2620] font-sans">
+                    Fundir Conquistas & Apresentações Relacionadas
+                  </h3>
+                  <p className="text-[11px] text-[#756758] font-serif">
+                    Sintetiza 2 ou mais itens em uma única entrada prestigiada para poupar espaço no currículo de 1 página.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setFusionModalOpen(false);
+                  setFusedResult(null);
+                }}
+                className="p-1 rounded text-[#756758] hover:text-[#2c2620] hover:bg-[#ede5d2] transition"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="space-y-2">
+              <label className="block text-[11px] font-bold text-[#5e5142] uppercase tracking-wider">
+                Selecione as Conquistas para Fundir (mínimo 2):
+              </label>
+              <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                {(profile?.awards_and_leadership || []).map((aw, idx) => {
+                  const isSelected = fusionSelectedAwardIndices.includes(idx);
+                  return (
+                    <div
+                      key={idx}
+                      onClick={() => handleToggleFusionAward(idx)}
+                      className={`p-2.5 rounded border cursor-pointer transition flex items-start gap-2.5 text-xs ${
+                        isSelected
+                          ? 'bg-[#f6efe2] border-[#8b5a2b]'
+                          : 'bg-[#fffdfa] border-[#dfd5be] hover:bg-[#fcf8f0]'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={() => {}}
+                        className="mt-0.5 h-3.5 w-3.5 rounded border-gray-300 text-[#8b5a2b] focus:ring-[#8b5a2b]"
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-[#221c16] truncate">{aw.title}</span>
+                          <span className="text-[10px] text-[#756758] ml-2 shrink-0">{aw.period_or_date}</span>
+                        </div>
+                        {aw.description && (
+                          <p className="text-[11px] text-[#635749] mt-0.5 line-clamp-1">{aw.description}</p>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between pt-1">
+              <span className="text-[11px] text-[#756758]">
+                {fusionSelectedAwardIndices.length} item(ns) selecionado(s)
+              </span>
+              <button
+                type="button"
+                disabled={fusionSelectedAwardIndices.length < 2 || isFusing}
+                onClick={handleRunFusion}
+                className="px-3.5 py-1.5 rounded bg-[#8b5a2b] hover:bg-[#6e441e] text-white text-xs font-semibold transition flex items-center gap-1.5 disabled:opacity-50 shadow-xs"
+              >
+                <Sparkles className="h-3.5 w-3.5" />
+                <span>{isFusing ? 'Sintetizando Fusão...' : 'Sintetizar com IA'}</span>
+              </button>
+            </div>
+
+            {fusedResult && (
+              <div className="p-3.5 bg-[#fffdfa] border border-[#a2d8b0] rounded-md space-y-3 shadow-xs">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-[#206634] uppercase tracking-wider flex items-center gap-1.5">
+                    <CheckCircle2 className="h-4 w-4" />
+                    Resultado da Fusão Sintética
+                  </span>
+                  {fusedResult.tokens_saved > 0 ? (
+                    <span className="text-[10px] font-mono bg-[#eef8f0] text-[#1c6434] border border-[#a2d8b0] px-2 py-0.5 rounded font-bold">
+                      ⚡ {fusedResult.tokens_saved} tokens poupados
+                    </span>
+                  ) : (
+                    <span className="text-[10px] font-mono bg-[#fdf5eb] text-[#8b5a2b] border border-[#f0d4b8] px-2 py-0.5 rounded font-bold">
+                      ✨ {fusedResult.tokens_used} tokens consumidos
+                    </span>
+                  )}
+                </div>
+
+                <div className="space-y-2">
+                  <div>
+                    <label className="block text-[10px] font-bold text-[#5e5142] uppercase mb-0.5">Título Unificado</label>
+                    <input
+                      type="text"
+                      value={fusedResult.fused_item?.title || ''}
+                      onChange={(e) =>
+                        setFusedResult({
+                          ...fusedResult,
+                          fused_item: { ...fusedResult.fused_item, title: e.target.value },
+                        })
+                      }
+                      className="w-full bg-white border border-[#d8ccb4] rounded px-2.5 py-1 text-xs text-[#2c2620]"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-[#5e5142] uppercase mb-0.5">Período / Ano</label>
+                    <input
+                      type="text"
+                      value={fusedResult.fused_item?.period_or_date || ''}
+                      onChange={(e) =>
+                        setFusedResult({
+                          ...fusedResult,
+                          fused_item: { ...fusedResult.fused_item, period_or_date: e.target.value },
+                        })
+                      }
+                      className="w-full bg-white border border-[#d8ccb4] rounded px-2.5 py-1 text-xs text-[#2c2620]"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-[#5e5142] uppercase mb-0.5">Descrição Coesa de Alto Impacto</label>
+                    <textarea
+                      rows={3}
+                      value={fusedResult.fused_item?.description || ''}
+                      onChange={(e) =>
+                        setFusedResult({
+                          ...fusedResult,
+                          fused_item: { ...fusedResult.fused_item, description: e.target.value },
+                        })
+                      }
+                      className="w-full bg-white border border-[#d8ccb4] rounded p-2 text-xs text-[#2c2620] resize-y leading-relaxed"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#dfd5be]">
+                  <button
+                    type="button"
+                    onClick={() => setFusedResult(null)}
+                    className="px-3 py-1.5 text-xs text-[#756758] hover:text-[#2c2620] hover:bg-[#ede5d2] rounded transition"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleApplyFusion}
+                    className="px-4 py-1.5 text-xs font-semibold text-white bg-[#206634] hover:bg-[#164b25] rounded transition shadow-xs flex items-center gap-1.5"
+                  >
+                    <Check className="h-3.5 w-3.5" />
+                    <span>Aplicar Fusão no Perfil</span>
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

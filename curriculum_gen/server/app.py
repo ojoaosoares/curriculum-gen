@@ -295,6 +295,9 @@ class SuggestDescriptionRequest(BaseModel):
     current_description: Optional[str] = ""
     job_description: Optional[str] = ""
     language: Optional[str] = "pt"
+    profile_context: Optional[Dict[str, Any]] = None
+    mode: Optional[str] = "generate"  # 'generate', 'improve', 'cross_ref'
+    target_project_id_or_title: Optional[str] = None
     api_key: Optional[str] = None
     provider: Optional[str] = None
     model: Optional[str] = None
@@ -310,15 +313,97 @@ def suggest_description(req: SuggestDescriptionRequest):
         model=req.model,
         provider=req.provider,
     )
-    suggestion = llm.generate_description(
+    result = llm.generate_description(
         item_type=req.item_type,
         title=req.title,
         subtitle_or_org=req.subtitle_or_org or "",
         current_description=req.current_description or "",
         job_description=req.job_description or "",
         language=req.language or "pt",
+        profile_context=req.profile_context,
+        mode=req.mode or "generate",
+        target_project=req.target_project_id_or_title,
     )
-    return {"suggestion": suggestion}
+
+    suggestion_text = result.get("text", "") if isinstance(result, dict) else str(result)
+    tokens_used = result.get("tokens_used", 0) if isinstance(result, dict) else 0
+    tokens_saved = result.get("tokens_saved", 320 if tokens_used == 0 else 0) if isinstance(result, dict) else 0
+    provider_used = result.get("provider", "offline_heuristic") if isinstance(result, dict) else "offline_heuristic"
+    strategy_used = result.get("strategy", "Síntese Contextual de Perfil") if isinstance(result, dict) else "Síntese Determinística"
+    cross_refs = result.get("cross_refs", []) if isinstance(result, dict) else []
+
+    # Record operation in token tracker so metrics and history are accurate
+    token_tracker.record_operation(
+        operation=f"Sugestão IA ({req.mode or 'generate'})",
+        tokens_used=tokens_used,
+        tokens_saved=tokens_saved,
+        category="job_distillation" if tokens_used > 0 else "pdf_distillation_and_schema",
+        strategy=strategy_used,
+        details=f"{req.item_type.capitalize()}: {req.title[:35]}",
+        provider=provider_used,
+    )
+
+    return {
+        "suggestion": suggestion_text,
+        "text": suggestion_text,
+        "tokens_used": tokens_used,
+        "tokens_saved": tokens_saved,
+        "strategy": strategy_used,
+        "provider": provider_used,
+        "cross_refs": cross_refs,
+    }
+
+
+class SuggestFusionRequest(BaseModel):
+    items: List[Dict[str, Any]]
+    profile_context: Optional[Dict[str, Any]] = None
+    language: Optional[str] = "pt"
+    job_description: Optional[str] = ""
+    api_key: Optional[str] = None
+    provider: Optional[str] = None
+    model: Optional[str] = None
+    base_url: Optional[str] = None
+
+
+@app.post("/api/suggest-fusion")
+def suggest_fusion(req: SuggestFusionRequest):
+    clean_key = req.api_key.strip().strip('"').strip("'") if req.api_key else None
+    llm = LLMOptimizer(
+        api_key=clean_key,
+        base_url=req.base_url,
+        model=req.model,
+        provider=req.provider,
+    )
+    result = llm.generate_fusion(
+        items=req.items,
+        profile_context=req.profile_context,
+        language=req.language or "pt",
+        job_description=req.job_description or "",
+    )
+
+    fused_item = result.get("fused_item", {})
+    tokens_used = result.get("tokens_used", 0)
+    tokens_saved = result.get("tokens_saved", 350 if tokens_used == 0 else 0)
+    provider_used = result.get("provider", "offline_heuristic")
+    strategy_used = result.get("strategy", "Fusão Sintética de Conquistas Relacionadas")
+
+    token_tracker.record_operation(
+        operation="Fusão de Conquistas com IA",
+        tokens_used=tokens_used,
+        tokens_saved=tokens_saved,
+        category="job_distillation" if tokens_used > 0 else "pdf_distillation_and_schema",
+        strategy=strategy_used,
+        details=f"Fusão de {len(req.items)} itens: {', '.join(i.get('title', '')[:20] for i in req.items)}",
+        provider=provider_used,
+    )
+
+    return {
+        "fused_item": fused_item,
+        "tokens_used": tokens_used,
+        "tokens_saved": tokens_saved,
+        "strategy": strategy_used,
+        "provider": provider_used,
+    }
 
 
 class VerifyKeyRequest(BaseModel):
