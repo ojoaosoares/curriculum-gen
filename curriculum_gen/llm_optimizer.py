@@ -139,6 +139,83 @@ def safe_parse_json_bullets(text: str) -> List[str]:
     return cleaned_bullets
 
 
+def _extract_final_description(raw_text: str) -> str:
+    """
+    Extracts clean, production-ready description text from LLM responses.
+    Handles JSON payloads ({"description": "..."}), codeblock wrapping,
+    and aggressively filters out any leaked prompt headers or thought-process scratchpads.
+    """
+    if not raw_text:
+        return ""
+
+    cleaned = raw_text.strip()
+
+    # 1. Strip markdown json codeblocks if present
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
+        cleaned = re.sub(r"\s*```$", "", cleaned)
+        cleaned = cleaned.strip()
+
+    # 2. Try strict JSON parse
+    try:
+        data = json.loads(cleaned)
+        if isinstance(data, dict):
+            for k in ["description", "text", "suggestion", "content", "result", "bullet", "bullets"]:
+                val = data.get(k)
+                if isinstance(val, str) and val.strip():
+                    return val.strip().strip('"\'')
+                elif isinstance(val, list) and val:
+                    return "\n".join(str(x).strip() for x in val if str(x).strip())
+        elif isinstance(data, list) and data:
+            return "\n".join(str(x).strip() for x in data if str(x).strip())
+    except Exception:
+        pass
+
+    # 3. Regex search for "description": "..." in case of minor JSON malformation
+    match = re.search(r'"(?:description|text|suggestion)"\s*:\s*"((?:[^"\\]|\\.)*)"', cleaned, re.DOTALL)
+    if match:
+        try:
+            extracted = match.group(1).encode().decode('unicode_escape', errors='ignore')
+            if extracted.strip():
+                return extracted.strip().strip('"\'')
+        except Exception:
+            pass
+
+    # 4. If raw text leaked prompt lines or scratchpad drafts, prune them
+    lines = cleaned.splitlines()
+    filtered_lines = []
+    stop_indicators = (
+        "expert technical",
+        "generate/improve",
+        "you are an expert",
+        "item type:",
+        "target job context",
+        "related profile",
+        "critical format",
+        "critical guidelines",
+        "output *only*",
+        "output only",
+        "core achievement",
+        "technical core:",
+        "metrics:",
+        "targeting:",
+        "draft 1",
+        "draft 2",
+        "draft 3",
+        "draft:",
+        "scratchpad",
+        "reasoning:",
+    )
+    for line in lines:
+        l_lower = line.strip().lower().lstrip("*-#•> ")
+        if any(l_lower.startswith(ind) for ind in stop_indicators):
+            continue
+        filtered_lines.append(line)
+
+    final_text = "\n".join(filtered_lines).strip()
+    return final_text.strip('"\'') if final_text else cleaned.strip('"\'')
+
+
 SYSTEM_PROMPT = """You are an elite technical resume coach and ATS optimization specialist.
 Your mission is to craft bullet points following the strict Google XYZ Formula:
 "Accomplished [X], as measured by [Y], by doing [Z]"
@@ -809,9 +886,15 @@ INSTRUCTIONS & CRITICAL CONSTRAINTS:
         # 1. Attempt LLM generation if client or native Gemini available
         if self.is_available():
             condensed_job = _condense_job_context(job_description or "", max_chars=300)
+            system_instruction = (
+                "You are an expert technical resume coach and ATS optimization specialist. "
+                f"Your mission is to craft a professional, high-impact description in {target_lang} for the candidate's CV item. "
+                "CRITICAL OUTPUT CONSTRAINT: Output ONLY a valid JSON object matching the schema: {\"description\": \"<final text in " + target_lang + ">\"}. "
+                "NEVER include conversational intro, markdown reasoning, scratchpad drafts, prompt repetitions, or explanations. "
+                "Return exclusively the JSON object."
+            )
             user_prompt = (
-                f"You are an expert technical resume/CV and ATS advisor.\n"
-                f"Your task is to generate or significantly improve an enriched, professional description in {target_lang} for this CV item:\n\n"
+                f"Generate or significantly improve an enriched, professional resume description in {target_lang} for this CV item:\n\n"
                 f"- Item Type: {item_type}\n"
                 f"- Title: {title}\n"
                 f"- Context / Organization / Date: {subtitle_or_org or 'N/A'}\n"
@@ -825,7 +908,7 @@ INSTRUCTIONS & CRITICAL CONSTRAINTS:
                 + "- If related profile projects exist (e.g. AtesN-DS with eBPF/XDP, 51% latency reduction, 213% throughput gain): seamlessly incorporate these concrete technical achievements and metrics.\n"
                 + "- If award or certification: write 1-2 robust, complete sentences stating what was presented or achieved, the underlying technical project/system, and its measurable merit or distinction.\n"
                 + "- If project or experience: write 1-3 strong action bullets using the XYZ impact formula (Action verb + Technical scope + Measurable outcome).\n"
-                + f"- Output ONLY the resulting description text in {target_lang}. No markdown headers, no conversational intro, no quotes."
+                + f"- OUTPUT FORMAT: Return ONLY a valid JSON object: {{\"description\": \"...\"}} containing the final {target_lang} description text. Do NOT wrap in conversational text or show draft iterations."
             )
 
             # Try native gemini
@@ -837,10 +920,18 @@ INSTRUCTIONS & CRITICAL CONSTRAINTS:
                     clean_m = m.replace("models/", "").strip()
                     url = f"https://generativelanguage.googleapis.com/v1beta/models/{clean_m}:generateContent?key={self.api_key}"
                     payload = {
-                        "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
+                        "contents": [
+                            {
+                                "role": "user",
+                                "parts": [
+                                    {"text": f"System Instructions:\n{system_instruction}\n\nTask Instructions:\n{user_prompt}"}
+                                ],
+                            }
+                        ],
                         "generationConfig": {
-                            "temperature": 0.4,
-                            "maxOutputTokens": 384,
+                            "responseMimeType": "application/json",
+                            "temperature": 0.2,
+                            "maxOutputTokens": 1024,
                         },
                     }
                     try:
@@ -851,17 +942,17 @@ INSTRUCTIONS & CRITICAL CONSTRAINTS:
                             if candidates:
                                 parts = candidates[0].get("content", {}).get("parts", [])
                                 if parts:
-                                    txt = parts[0].get("text", "").strip()
-                                    if txt:
+                                    raw_txt = parts[0].get("text", "").strip()
+                                    cleaned_txt = _extract_final_description(raw_txt)
+                                    if cleaned_txt:
                                         usage = data.get("usageMetadata", {})
                                         if usage and "totalTokenCount" in usage:
                                             used = usage.get("totalTokenCount", 0)
                                         else:
-                                            used = (len(user_prompt) // 4) + (len(txt) // 4)
+                                            used = (len(user_prompt) // 4) + (len(cleaned_txt) // 4)
                                         self.calls_succeeded += 1
                                         self.tokens_used += used
                                         self.model = clean_m
-                                        cleaned_txt = txt.strip('"\'')
                                         print(f"[LLMOptimizer] generate_description Gemini sucesso com '{clean_m}' ({used} tokens)")
                                         return {
                                             "text": cleaned_txt,
@@ -889,18 +980,19 @@ INSTRUCTIONS & CRITICAL CONSTRAINTS:
                     response = self.client.chat.completions.create(
                         model=self.model,
                         messages=[
-                            {"role": "system", "content": f"You are an expert technical CV optimizer. Output exclusively the complete, professional description in {target_lang} without fragments."},
+                            {"role": "system", "content": system_instruction},
                             {"role": "user", "content": user_prompt},
                         ],
-                        temperature=0.4,
-                        max_tokens=384,
+                        temperature=0.2,
+                        max_tokens=1024,
+                        response_format={"type": "json_object"},
                     )
-                    txt = response.choices[0].message.content.strip()
-                    if txt:
-                        used = response.usage.total_tokens if hasattr(response, "usage") and response.usage else ((len(user_prompt) // 4) + (len(txt) // 4))
+                    raw_txt = response.choices[0].message.content.strip()
+                    cleaned_txt = _extract_final_description(raw_txt)
+                    if cleaned_txt:
+                        used = response.usage.total_tokens if hasattr(response, "usage") and response.usage else ((len(user_prompt) // 4) + (len(cleaned_txt) // 4))
                         self.calls_succeeded += 1
                         self.tokens_used += used
-                        cleaned_txt = txt.strip('"\'')
                         return {
                             "text": cleaned_txt,
                             "suggestion": cleaned_txt,
@@ -1154,6 +1246,12 @@ INSTRUCTIONS & CRITICAL CONSTRAINTS:
                 + '{"title": "...", "period_or_date": "...", "description": "..."}'
             )
 
+            fusion_system_instruction = (
+                "You are an expert technical CV advisor. Output ONLY a valid JSON object matching: "
+                '{"title": "...", "period_or_date": "...", "description": "..."}. '
+                "Do not include any conversational preamble, scratchpads, or reasoning."
+            )
+
             # Gemini
             if self.provider == "gemini" and self.api_key:
                 import httpx
@@ -1163,11 +1261,18 @@ INSTRUCTIONS & CRITICAL CONSTRAINTS:
                     clean_m = m.replace("models/", "").strip()
                     url = f"https://generativelanguage.googleapis.com/v1beta/models/{clean_m}:generateContent?key={self.api_key}"
                     payload = {
-                        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+                        "contents": [
+                            {
+                                "role": "user",
+                                "parts": [
+                                    {"text": f"System Instructions:\n{fusion_system_instruction}\n\nTask Instructions:\n{prompt}"}
+                                ],
+                            }
+                        ],
                         "generationConfig": {
                             "temperature": 0.2,
                             "responseMimeType": "application/json",
-                            "maxOutputTokens": 384,
+                            "maxOutputTokens": 1024,
                         },
                     }
                     try:

@@ -410,3 +410,34 @@ def test_gemini_candidate_fallback_and_error_reporting(monkeypatch):
     assert data_error["provider"] == "offline_heuristic"
     assert data_error["fallback_reason"] is not None
     assert "429" in data_error["fallback_reason"]
+
+
+def test_extract_final_description_prevents_prompt_leakage():
+    from curriculum_gen.llm_optimizer import _extract_final_description
+
+    # 1. Standard clean JSON
+    json_input = '{"description": "Apresentou artigo no XV SBESC sobre AtesN-DS com ganho de 213% de vazão."}'
+    assert _extract_final_description(json_input) == "Apresentou artigo no XV SBESC sobre AtesN-DS com ganho de 213% de vazão."
+
+    # 2. Markdown-wrapped JSON
+    md_json_input = '```json\n{"description": "Desenvolvimento do resolvedor DNS em eBPF e XDP."}\n```'
+    assert _extract_final_description(md_json_input) == "Desenvolvimento do resolvedor DNS em eBPF e XDP."
+
+    # 3. Leaked prompt / scratchpad with draft
+    leaked_input = """Expert technical resume/CV and ATS advisor.
+Generate/improve a professional description for a CV item.
+Award.
+Apresentações Científicas & Distinção Acadêmica: AtesN-DS (SBESC & Semana do Conhecimento UFMG).
+2025.
+Output *only* the Portuguese text.
+* Core Achievement 1: Presentation at XV SBESC.
+* Technical Core: AtesN-DS.
+* Metrics: 51% reduction in latency.
+* Draft 1 (Literal): Apresentei um artigo no XV SBESC
+Apresentação científica do projeto AtesN-DS no XV SBESC e condecoração com o prêmio de Relevância Acadêmica na UFMG 2025."""
+
+    extracted = _extract_final_description(leaked_input)
+    assert "Expert technical" not in extracted
+    assert "Draft 1" not in extracted
+    assert "Core Achievement" not in extracted
+    assert "Apresentação científica do projeto AtesN-DS" in extracted
