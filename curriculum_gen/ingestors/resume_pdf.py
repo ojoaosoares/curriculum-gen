@@ -8,6 +8,7 @@ from pypdf import PdfReader
 
 from curriculum_gen.llm_optimizer import LLMOptimizer
 from curriculum_gen.token_tracker import token_tracker
+from curriculum_gen.template_engine import compact_period
 
 # In-memory memoization cache for identical PDF files (SHA-256)
 _PDF_INGEST_CACHE: Dict[str, Dict[str, Any]] = {}
@@ -68,7 +69,9 @@ CRITICAL RULES:
 4. Extract ALL education entries (institutions, degrees, periods).
 5. Extract ALL skills and languages spoken into appropriate categories in 'skills'.
 6. If the text is from a LinkedIn PDF, note that email might be broken across lines (e.g. 'user@gmail.c\\nom' -> 'user@gmail.com') and sidebar sections include 'Contato', 'Principais competências', 'Languages', 'Certifications', 'Honors-Awards'. Extract ALL of them.
-7. Output ONLY the JSON object. No markdown code blocks, no intro, no outro.
+7. For dates and periods, strip duration counts in parentheses like '(2 anos 5 meses)' or '(1 yr 2 mos)' and keep them compact (e.g. '09/2025 - Present').
+8. For awards and certifications, NEVER fabricate placeholder or fictional descriptions. If the text does not contain an explanation, leave 'description': ''. Do not duplicate the year in both 'title' and 'period_or_date'.
+9. Output ONLY the JSON object. No markdown code blocks, no intro, no outro.
 
 RESUME TEXT:
 """
@@ -346,7 +349,7 @@ class ResumePDFIngestor:
                     date_indices.append(idx)
 
             for i, d_idx in enumerate(date_indices):
-                period = lines[d_idx]
+                period = compact_period(lines[d_idx])
                 prev_lines = lines[max(0, d_idx - 2):d_idx]
                 if len(prev_lines) == 2:
                     company, role = prev_lines[0], prev_lines[1]
@@ -425,7 +428,7 @@ class ResumePDFIngestor:
                 education.append({
                     "institution": institution,
                     "degree": degree,
-                    "period": period or "2023 - 2027",
+                    "period": compact_period(period or "2023 – 2027"),
                     "notes": None,
                 })
 
@@ -469,11 +472,16 @@ class ResumePDFIngestor:
         if honors_m:
             lines = [l.strip() for l in honors_m.group(1).splitlines() if l.strip()]
             if lines:
+                raw_title = " ".join(lines)
+                year_m = re.search(r"\b(19\d\d|20\d\d)\b", raw_title)
+                year = year_m.group(1) if year_m else ""
+                clean_t = re.sub(rf"\b{year}\b", "", raw_title).strip() if year else raw_title
+                clean_t = re.sub(r"\s+", " ", clean_t).strip(" -–:")
                 awards.append({
                     "id": f"award-pdf-{len(awards)+1}",
-                    "title": " ".join(lines),
-                    "period_or_date": "2025",
-                    "description": "Reconhecimento acadêmico ou premiação profissional documentada no currículo",
+                    "title": clean_t or raw_title,
+                    "period_or_date": year,
+                    "description": "",
                 })
 
         # Certifications
@@ -497,11 +505,15 @@ class ResumePDFIngestor:
             if curr:
                 certs.append(" ".join(curr))
             for c in certs:
+                year_m = re.search(r"\b(19\d\d|20\d\d)\b", c)
+                year = year_m.group(1) if year_m else ""
+                clean_c = re.sub(rf"\b{year}\b", "", c).strip() if year else c
+                clean_c = re.sub(r"\s+", " ", clean_c).strip(" -–:")
                 awards.append({
                     "id": f"award-pdf-{len(awards)+1}",
-                    "title": c,
-                    "period_or_date": "Certificação",
-                    "description": "Certificação técnica ou participação em simpósio",
+                    "title": clean_c or c,
+                    "period_or_date": year,
+                    "description": "",
                 })
 
         return {

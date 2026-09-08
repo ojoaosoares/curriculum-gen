@@ -108,7 +108,7 @@
 \newenvironment{twocolentry}[2][]{
     \onecolentry
     \def\secondColumn{#2}
-    \setcolumnwidth{\fill, 4.5 cm}
+    \setcolumnwidth{\fill, 4.8 cm}
     \begin{paracol}{2}
 }{
     \switchcolumn \raggedleft \secondColumn
@@ -206,10 +206,23 @@
 <% if awards_and_leadership %>
 \section{<< labels.awards_and_leadership >>}
 <% for item in awards_and_leadership %>
-\textbf{<< item.title >>} \hfill << item.period_or_date >> \\
-<< item.description >>
+<% if item.period_or_date %>
+\begin{twocolentry}{
+\textit{<< item.period_or_date >>}}
+\textbf{<< item.title >>}
+\end{twocolentry}
+<% else %>
+\begin{onecolentry}
+\textbf{<< item.title >>}
+\end{onecolentry}
+<% endif %>
+<% if item.description %>
+\begin{onecolentry}
+    << item.description >>
+\end{onecolentry}
+<% endif %>
 <% if not loop.last %>
-\vspace{0.15 cm}
+\vspace{0.08 cm}
 <% endif %>
 <% endfor %>
 <% endif %>

@@ -1,6 +1,6 @@
 import re
 from pathlib import Path
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 from jinja2 import Environment, FileSystemLoader
 
 from curriculum_gen.models import (
@@ -88,6 +88,116 @@ def sanitize_latex(text: str) -> str:
         text = text.replace(f"LATEXTOKENXYZ{idx}ENDTOKEN", tokens[idx])
 
     return text
+
+
+MONTH_MAP_PT = {
+    "janeiro": "Jan", "fevereiro": "Fev", "março": "Mar", "marco": "Mar",
+    "abril": "Abr", "maio": "Mai", "junho": "Jun", "julho": "Jul",
+    "agosto": "Ago", "setembro": "Set", "outubro": "Out", "novembro": "Nov", "dezembro": "Dez",
+    "jan": "Jan", "fev": "Fev", "feb": "Fev", "mar": "Mar", "apr": "Abr", "abr": "Abr",
+    "may": "Mai", "mai": "Mai", "jun": "Jun", "jul": "Jul", "aug": "Ago", "ago": "Ago",
+    "sep": "Set", "set": "Set", "oct": "Out", "out": "Out", "nov": "Nov", "dec": "Dez", "dez": "Dez"
+}
+
+MONTH_MAP_EN = {
+    "janeiro": "Jan", "fevereiro": "Feb", "março": "Mar", "marco": "Mar",
+    "abril": "Apr", "maio": "May", "junho": "Jun", "julho": "Jul",
+    "agosto": "Aug", "setembro": "Sep", "outubro": "Oct", "novembro": "Nov", "dezembro": "Dec",
+    "jan": "Jan", "fev": "Feb", "feb": "Feb", "mar": "Mar", "apr": "Apr", "abr": "Apr",
+    "may": "May", "mai": "May", "jun": "Jun", "jul": "Jul", "aug": "Aug", "ago": "Aug",
+    "sep": "Sep", "set": "Sep", "oct": "Oct", "out": "Oct", "nov": "Nov", "dec": "Dec", "dez": "Dec"
+}
+
+
+def compact_period(period: Optional[str], language: str = "pt") -> str:
+    """
+    Compacts verbose period strings (especially from LinkedIn PDFs) to strictly fit
+    within single-line CV date columns (e.g. 'setembro de 2025 - Present (1 ano 1 mês)' -> 'Set 2025 – Presente').
+    """
+    if not period or not str(period).strip():
+        return ""
+    text = str(period).strip()
+
+    # 1. Remove parenthetical durations and employment type labels
+    text = re.sub(
+        r"\s*\([^)]*(?:ano|mes|mês|year|yr|mo|present|atual|tempo|integral|parcial|expected|previsão)[^)]*\)",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(r"\s*\(\s*\d+\s*(?:anos?|meses|mês|years?|yrs?|mos?)\b[^)]*\)", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s*\((?:Expected|Previsão)\)", "", text, flags=re.IGNORECASE)
+
+    # 2. Normalize dashes to en-dash
+    text = re.sub(r"\s*[-–—]\s*", " – ", text).strip()
+
+    is_pt = language.lower().startswith("pt")
+    month_map = MONTH_MAP_PT if is_pt else MONTH_MAP_EN
+    present_str = "Presente" if is_pt else "Present"
+
+    # Normalize Present / Presente / Atual / momento
+    text = re.sub(r"\b(Presente|Present|Atual|momento|current)\b", present_str, text, flags=re.IGNORECASE)
+
+    # 3. Compact 'Mês de YYYY' -> 'Mês YYYY'
+    for month_full, month_abbr in month_map.items():
+        text = re.sub(rf"\b{month_full}\s*(?:de\s*|/\s*)?(\d{{4}})\b", rf"{month_abbr} \1", text, flags=re.IGNORECASE)
+        text = re.sub(rf"\b{month_full}\b", month_abbr, text, flags=re.IGNORECASE)
+
+    # Clean double spaces
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+FAKE_AWARD_DESCRIPTIONS = {
+    "certificação técnica ou participação em simpósio",
+    "certificacao tecnica ou participacao em simposio",
+    "reconhecimento acadêmico ou premiação profissional documentada no currículo",
+    "reconhecimento academico ou premiacao profissional documentada no curriculo",
+}
+
+
+def clean_award_fields(
+    title: str,
+    period_or_date: Optional[str],
+    description: Optional[str],
+    language: str = "pt",
+) -> Tuple[str, str, str]:
+    """
+    Cleans awards/certifications by:
+    - Stripping fake hardcoded heuristic descriptions
+    - Avoiding duplicated dates between title and date column (e.g. 'UFMG 2025' and '2025' -> 'UFMG' and '2025')
+    - Extracting year from title if date is missing
+    - Compacting dates
+    """
+    t = (title or "").strip()
+    d = (period_or_date or "").strip()
+    desc = (description or "").strip()
+
+    # Suppress fake hardcoded heuristic descriptions
+    if desc.lower() in FAKE_AWARD_DESCRIPTIONS:
+        desc = ""
+
+    # Normalize invalid dates
+    if d.lower() in ["n/a", "none", "null"]:
+        d = ""
+
+    # If title ends with the date, remove the duplicate date from title to avoid '2025 2025'
+    if d and re.search(rf"\b{re.escape(d)}\b\s*$", t):
+        t = re.sub(rf"\b{re.escape(d)}\b\s*$", "", t).strip()
+
+    # If date is empty or 'Certificação', but title ends with a 4-digit year, extract that year
+    year_match = re.search(r"\b(19\d\d|20\d\d)\b\s*$", t)
+    if year_match and (not d or d.lower() in ["certificação", "certificacao", "certificate", "certification"]):
+        d = year_match.group(1)
+        t = re.sub(rf"\b{re.escape(d)}\b\s*$", "", t).strip()
+
+    # If date has parenthetical info or long text, compact it
+    d = compact_period(d, language=language)
+
+    # Clean trailing punctuation from title (e.g. trailing dash or colon)
+    t = re.sub(r"[\s\-\–\—\:]+$", "", t).strip()
+
+    return t, d, desc
 
 
 def _make_mbox(inner: str) -> str:
@@ -229,7 +339,7 @@ class TemplateEngine:
         formatted_exps = []
         for exp in experiences:
             bullets = exp.formatted_bullets if exp.formatted_bullets else exp.raw_bullets
-            period_str = translate_pt_term(exp.period)
+            period_str = compact_period(translate_pt_term(exp.period), language=lang)
             role_str = translate_pt_term(exp.role)
             formatted_exps.append(
                 {
@@ -251,7 +361,7 @@ class TemplateEngine:
                     "subtitle": sanitize_latex(proj.subtitle or ""),
                     "url": proj.url,
                     "url_label": sanitize_latex(proj.url_label or "GitHub"),
-                    "period": sanitize_latex(translate_pt_term(proj.period or "")),
+                    "period": sanitize_latex(compact_period(translate_pt_term(proj.period or ""), language=lang)),
                     "bullets": [sanitize_latex(b) for b in bullets],
                 }
             )
@@ -259,11 +369,17 @@ class TemplateEngine:
         # Format awards & leadership
         formatted_awards = []
         for aw in awards:
+            title_clean, date_clean, desc_clean = clean_award_fields(
+                title=aw.title,
+                period_or_date=aw.period_or_date,
+                description=aw.description,
+                language=lang,
+            )
             formatted_awards.append(
                 {
-                    "title": sanitize_latex(translate_pt_term(aw.title)),
-                    "period_or_date": sanitize_latex(translate_pt_term(aw.period_or_date)),
-                    "description": sanitize_latex(translate_pt_term(aw.description)),
+                    "title": sanitize_latex(translate_pt_term(title_clean)),
+                    "period_or_date": sanitize_latex(translate_pt_term(date_clean)),
+                    "description": sanitize_latex(translate_pt_term(desc_clean)),
                 }
             )
 
@@ -274,7 +390,7 @@ class TemplateEngine:
                 {
                     "institution": sanitize_latex(edu.institution),
                     "degree": sanitize_latex(translate_pt_term(edu.degree)),
-                    "period": sanitize_latex(translate_pt_term(edu.period)),
+                    "period": sanitize_latex(compact_period(translate_pt_term(edu.period), language=lang)),
                     "notes": sanitize_latex(translate_pt_term(edu.notes or "")),
                 }
             )
