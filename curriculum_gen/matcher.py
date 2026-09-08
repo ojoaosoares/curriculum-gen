@@ -341,10 +341,65 @@ class MatcherEngine:
                 f"Considere adicionar termos como: {top_missing_preview} se você possuir experiência prática neles."
             )
 
+        # 3. Detect incomplete items selected for the CV
+        incomplete_items: List[Dict[str, Any]] = []
+
+        for exp in selected_exps:
+            bullets = exp.formatted_bullets or exp.raw_bullets or []
+            exp_text = " ".join(bullets).strip()
+            if len(exp_text) < 30:
+                incomplete_items.append({
+                    "id": exp.id or f"exp-{exp.company}",
+                    "type": "experience",
+                    "type_label": "Experiência",
+                    "title": f"{exp.role} @ {exp.company}",
+                    "company": exp.company,
+                    "role": exp.role,
+                    "reason": "Sem tópicos ou descrição de atividades/resultados.",
+                    "suggestion": "Adicione 1-3 bullet points destacando conquistas, atribuições e tecnologias utilizadas.",
+                    "current_description": exp_text,
+                })
+
+        for proj in selected_projs:
+            bullets = proj.formatted_bullets or proj.raw_bullets or []
+            proj_text = " ".join(bullets).strip()
+            if len(proj_text) < 30:
+                incomplete_items.append({
+                    "id": proj.id or f"proj-{proj.title}",
+                    "type": "project",
+                    "type_label": "Projeto / Publicação",
+                    "title": proj.title,
+                    "subtitle": proj.subtitle or "",
+                    "reason": "Sem descrição técnica do projeto, arquitetura ou resultados.",
+                    "suggestion": "Explique o objetivo do projeto/artigo, desafios superados e tecnologias aplicadas.",
+                    "current_description": proj_text,
+                })
+
+        for aw in selected_awards:
+            aw_desc = (aw.description or "").strip()
+            if len(aw_desc) < 20:
+                incomplete_items.append({
+                    "id": aw.id or f"award-{aw.title}",
+                    "type": "award",
+                    "type_label": "Certificado / Reconhecimento",
+                    "title": aw.title,
+                    "period_or_date": aw.period_or_date or "",
+                    "reason": "Falta descrição sobre o escopo, competências validadas ou mérito.",
+                    "suggestion": "Adicione 1-2 frases resumindo os temas abordados ou o diferencial desse reconhecimento.",
+                    "current_description": aw_desc,
+                })
+
+        if incomplete_items:
+            recommendations.insert(
+                0,
+                f"Atenção ATS: {len(incomplete_items)} item(ns) selecionados no currículo possuem pouca ou nenhuma descrição detalhada. Complete-os para enriquecer o documento e pontuar melhor nas palavras-chave da vaga.",
+            )
+
         return {
             "score_pct": match_pct,
             "matched_keywords": matched_sorted,
             "missing_keywords": missing_sorted,
             "total_job_keywords": total_unique_job_tokens,
             "recommendations": recommendations,
+            "incomplete_items": incomplete_items,
         }

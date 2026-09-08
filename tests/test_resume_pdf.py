@@ -189,6 +189,13 @@ Page 2 of 2"""
     assert len(parsed["awards_and_leadership"]) >= 1
     assert any("Relevância Acadêmica" in a["title"] for a in parsed["awards_and_leadership"])
 
+    # 6. Projects & Publications validation
+    assert "projects" in parsed
+    assert len(parsed["projects"]) >= 2
+    proj_titles = [p["title"] for p in parsed["projects"]]
+    assert any("AtesN-DS" in t for t in proj_titles)
+    assert any("GPU" in t for t in proj_titles)
+
 
 def test_resume_pdf_merge_logic():
     ingestor = ResumePDFIngestor()

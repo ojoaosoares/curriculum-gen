@@ -27,6 +27,8 @@ import {
   Pencil,
   Plus,
   Award,
+  AlertTriangle,
+  Edit3,
 } from 'lucide-react';
 
 const extractErrorMessage = (errData, defaultMsg = 'Ocorreu um erro na operação.') => {
@@ -158,6 +160,7 @@ export default function App() {
 
   // Profile Item Editor Modal State
   const [editingItem, setEditingItem] = useState(null);
+  const [isSuggesting, setIsSuggesting] = useState(false);
 
   useEffect(() => {
     if (apiKey) {
@@ -396,6 +399,73 @@ export default function App() {
           description: item.description || '',
         },
       });
+    }
+  };
+
+  const handleOpenEditById = (type, id, fallbackItem = null) => {
+    if (!profile) return;
+    let list = [];
+    if (type === 'experience') list = profile.experiences || [];
+    else if (type === 'project') list = profile.projects || [];
+    else if (type === 'award') list = profile.awards_and_leadership || [];
+
+    const idx = list.findIndex(
+      (x) =>
+        (id && x.id === id) ||
+        (x.title && fallbackItem?.title && x.title.toLowerCase().trim() === fallbackItem.title.toLowerCase().trim()) ||
+        (x.company && fallbackItem?.company && x.company.toLowerCase().trim() === fallbackItem.company.toLowerCase().trim())
+    );
+
+    if (idx !== -1) {
+      handleOpenEdit(type, idx, list[idx]);
+    } else if (fallbackItem) {
+      handleOpenEdit(type, null, fallbackItem);
+    }
+  };
+
+  const handleSuggestDescription = async (itemType, title, subtitleOrOrg, currentDesc) => {
+    if (!title && !subtitleOrOrg) return;
+    setIsSuggesting(true);
+    try {
+      const res = await fetch('/api/suggest-description', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          item_type: itemType,
+          title: title || '',
+          subtitle_or_org: subtitleOrOrg || '',
+          current_description: currentDesc || '',
+          job_description: jobDescription || '',
+          language: language || 'pt',
+          api_key: apiKey || null,
+          provider: provider || null,
+          model: model || null,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.suggestion) {
+          if (itemType === 'award') {
+            setEditingItem((prev) => ({
+              ...prev,
+              form: { ...prev.form, description: data.suggestion },
+            }));
+          } else {
+            setEditingItem((prev) => {
+              const prevBullets = prev.form.raw_bullets ? prev.form.raw_bullets.trim() : '';
+              const newBullets = prevBullets ? `${prevBullets}\n${data.suggestion}` : data.suggestion;
+              return {
+                ...prev,
+                form: { ...prev.form, raw_bullets: newBullets },
+              };
+            });
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Erro ao sugerir descrição:', err);
+    } finally {
+      setIsSuggesting(false);
     }
   };
 
@@ -1255,10 +1325,15 @@ export default function App() {
                               ))}
                             </div>
                           )}
-                          {exp.raw_bullets && exp.raw_bullets.length > 0 && (
+                          {exp.raw_bullets && exp.raw_bullets.length > 0 ? (
                             <p className="text-[11px] text-[#5e5142] italic line-clamp-2 pt-0.5">
                               "{exp.raw_bullets[0]}"
                             </p>
+                          ) : (
+                            <div className="pt-1 flex items-center gap-1.5 text-[10px] text-[#b45309]">
+                              <AlertTriangle className="h-3 w-3" />
+                              <span className="font-mono">Sem descrição/bullets cadastrados</span>
+                            </div>
                           )}
                         </div>
                       ))
@@ -1318,6 +1393,16 @@ export default function App() {
                               ))}
                             </div>
                           )}
+                          {proj.raw_bullets && proj.raw_bullets.length > 0 ? (
+                            <p className="text-[11px] text-[#5e5142] italic line-clamp-2 pt-0.5">
+                              "{proj.raw_bullets[0]}"
+                            </p>
+                          ) : (
+                            <div className="pt-1 flex items-center gap-1.5 text-[10px] text-[#b45309]">
+                              <AlertTriangle className="h-3 w-3" />
+                              <span className="font-mono">Sem descrição técnica detalhada</span>
+                            </div>
+                          )}
                         </div>
                       ))
                     ) : (
@@ -1349,7 +1434,14 @@ export default function App() {
                           <div className="flex justify-between items-start">
                             <div>
                               <span className="font-bold text-xs text-[#221c16] block">{aw.title}</span>
-                              {aw.description && <span className="text-[#635749] text-[11px] mt-0.5 block">{aw.description}</span>}
+                              {aw.description ? (
+                                <span className="text-[#635749] text-[11px] mt-0.5 block">{aw.description}</span>
+                              ) : (
+                                <div className="mt-1 flex items-center gap-1 text-[10px] text-[#b45309]">
+                                  <AlertTriangle className="h-3 w-3" />
+                                  <span className="font-mono">Sem descrição detalhada</span>
+                                </div>
+                              )}
                             </div>
                             <div className="flex items-center gap-1 shrink-0 ml-2">
                               <span className="text-[#756758] font-normal text-[11px] mr-1">{aw.period_or_date}</span>
@@ -2450,6 +2542,53 @@ export default function App() {
                           </div>
                         )}
 
+                        {/* Incomplete Items Alert Banner */}
+                        {result.ats_diagnostics.incomplete_items && result.ats_diagnostics.incomplete_items.length > 0 && (
+                          <div className="p-3.5 bg-[#fef7ee] rounded-md border border-[#f3d19e] space-y-2.5">
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-2">
+                                <AlertTriangle className="h-4 w-4 text-[#c05621] shrink-0" />
+                                <span className="font-bold text-xs font-sans text-[#7b341e] uppercase tracking-wider">
+                                  Itens Selecionados com Descrição Incompleta ({result.ats_diagnostics.incomplete_items.length})
+                                </span>
+                              </div>
+                              <span className="text-[10px] font-mono bg-[#fbd38d] text-[#744210] px-2 py-0.5 rounded font-bold">
+                                Ação Necessária
+                              </span>
+                            </div>
+                            <p className="text-xs text-[#7b341e] font-serif leading-relaxed">
+                              O algoritmo ATS ranqueou estes itens como ideais para a vaga, mas eles possuem descrições curtas ou ausentes no perfil. Complete-os para valorizar suas competências e pontuar nos filtros:
+                            </p>
+                            <div className="space-y-2 pt-1">
+                              {result.ats_diagnostics.incomplete_items.map((item, idx) => (
+                                <div key={idx} className="bg-white p-2.5 rounded border border-[#ebd2b2] flex flex-wrap sm:flex-nowrap items-center justify-between gap-3 shadow-2xs">
+                                  <div className="min-w-0 flex-1">
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-[10px] uppercase font-bold font-mono px-1.5 py-0.5 rounded bg-[#f3ebd8] text-[#6b583f]">
+                                        {item.type_label}
+                                      </span>
+                                      <span className="font-bold text-xs text-[#1f1913] truncate">
+                                        {item.title}
+                                      </span>
+                                    </div>
+                                    <p className="text-[11px] text-[#8b5a2b] mt-0.5">
+                                      {item.reason} — <span className="italic">{item.suggestion}</span>
+                                    </p>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOpenEditById(item.type, item.id, item)}
+                                    className="shrink-0 flex items-center gap-1.5 text-xs font-sans font-bold bg-[#8b5a2b] hover:bg-[#724a23] text-white px-3 py-1.5 rounded transition-colors shadow-2xs"
+                                  >
+                                    <Edit3 className="h-3.5 w-3.5" />
+                                    Completar Descrição
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
                         {/* Recommendations */}
                         {result.ats_diagnostics.recommendations && result.ats_diagnostics.recommendations.length > 0 && (
                           <div className="p-3 bg-[#fdfcf9] rounded border border-[#dfd5be] space-y-1 text-xs">
@@ -2473,32 +2612,63 @@ export default function App() {
                         Experiências Selecionadas
                       </h4>
                       <div className="space-y-3">
-                        {result.selected_experiences?.map((exp, idx) => (
-                          <div key={idx} className="paper-card rounded-md p-4 space-y-2">
-                            <div className="flex items-center justify-between">
-                              <span className="font-bold text-base text-[#1f1913] font-serif">
-                                {exp.role} @ {exp.company}
-                              </span>
-                              <span className="text-xs font-mono font-bold text-[#2c2620] bg-[#f0e8d7] px-2.5 py-0.5 rounded border border-[#d6c9b1]">
-                                Score: {exp.score?.toFixed(3)}
-                              </span>
-                            </div>
-                            <div className="flex flex-wrap gap-1.5">
-                              {exp.tags?.map((t, i) => (
-                                <span key={i} className="text-xs font-sans bg-[#ede5d2] text-[#4d4235] px-2 py-0.5 rounded">
-                                  {t}
+                        {result.selected_experiences?.map((exp, idx) => {
+                          const bullets = exp.formatted_bullets || exp.raw_bullets || [];
+                          const isUnderDescribed = !bullets || bullets.length === 0 || bullets.join(' ').trim().length < 30;
+                          return (
+                            <div key={idx} className="paper-card rounded-md p-4 space-y-2">
+                              <div className="flex items-center justify-between">
+                                <span className="font-bold text-base text-[#1f1913] font-serif">
+                                  {exp.role} @ {exp.company}
                                 </span>
-                              ))}
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs font-mono font-bold text-[#2c2620] bg-[#f0e8d7] px-2.5 py-0.5 rounded border border-[#d6c9b1]">
+                                    Score: {exp.score?.toFixed(3)}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOpenEditById('experience', exp.id, exp)}
+                                    title="Editar esta experiência no perfil"
+                                    className="p-1 hover:bg-[#ede5d2] rounded text-[#756758] hover:text-[#2c2620] transition"
+                                  >
+                                    <Pencil className="h-3.5 w-3.5" />
+                                  </button>
+                                </div>
+                              </div>
+                              <div className="flex flex-wrap gap-1.5">
+                                {exp.tags?.map((t, i) => (
+                                  <span key={i} className="text-xs font-sans bg-[#ede5d2] text-[#4d4235] px-2 py-0.5 rounded">
+                                    {t}
+                                  </span>
+                                ))}
+                              </div>
+                              {isUnderDescribed ? (
+                                <div className="flex items-center justify-between p-2.5 bg-[#fdf5eb] rounded border border-[#f3d19e] text-xs text-[#8b5a2b]">
+                                  <span className="flex items-center gap-1.5 font-medium">
+                                    <AlertTriangle className="h-3.5 w-3.5 text-[#c05621] shrink-0" />
+                                    Experiência selecionada com poucos ou nenhum tópico descritivo.
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOpenEditById('experience', exp.id, exp)}
+                                    className="flex items-center gap-1 text-[11px] font-bold text-[#8b5a2b] hover:text-[#5c3c1a] bg-white px-2 py-1 rounded border border-[#dfcaa7] shrink-0 shadow-2xs"
+                                  >
+                                    <Edit3 className="h-3 w-3" />
+                                    Completar
+                                  </button>
+                                </div>
+                              ) : (
+                                <ul className="text-sm text-[#42392f] space-y-1.5 list-disc list-inside font-serif mt-1">
+                                  {bullets.map((b, i) => (
+                                    <li key={i} className="text-sm leading-relaxed">
+                                      {b.replace(/\\textbf\{([^}]+)\}/g, '$1')}
+                                    </li>
+                                  ))}
+                                </ul>
+                              )}
                             </div>
-                            <ul className="text-sm text-[#42392f] space-y-1.5 list-disc list-inside font-serif mt-1">
-                              {(exp.formatted_bullets || exp.raw_bullets)?.map((b, i) => (
-                                <li key={i} className="text-sm leading-relaxed">
-                                  {b.replace(/\\textbf\{([^}]+)\}/g, '$1')}
-                                </li>
-                              ))}
-                            </ul>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     </div>
 
@@ -2509,25 +2679,56 @@ export default function App() {
                         Projetos Selecionados
                       </h4>
                       <div className="space-y-3">
-                        {result.selected_projects?.map((proj, idx) => (
-                          <div key={idx} className="paper-card rounded-md p-4 space-y-2">
-                            <div className="flex items-center justify-between">
-                              <span className="font-bold text-base text-[#1f1913] font-serif">
-                                {proj.title} {proj.subtitle && `(${proj.subtitle})`}
-                              </span>
-                              <span className="text-xs font-mono font-bold text-[#2c2620] bg-[#f0e8d7] px-2.5 py-0.5 rounded border border-[#d6c9b1]">
-                                Score: {proj.score?.toFixed(3)}
-                              </span>
+                        {result.selected_projects?.map((proj, idx) => {
+                          const bullets = proj.formatted_bullets || proj.raw_bullets || [];
+                          const isUnderDescribed = !bullets || bullets.length === 0 || bullets.join(' ').trim().length < 30;
+                          return (
+                            <div key={idx} className="paper-card rounded-md p-4 space-y-2">
+                              <div className="flex items-center justify-between">
+                                <span className="font-bold text-base text-[#1f1913] font-serif">
+                                  {proj.title} {proj.subtitle && `(${proj.subtitle})`}
+                                </span>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs font-mono font-bold text-[#2c2620] bg-[#f0e8d7] px-2.5 py-0.5 rounded border border-[#d6c9b1]">
+                                    Score: {proj.score?.toFixed(3)}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOpenEditById('project', proj.id, proj)}
+                                    title="Editar este projeto no perfil"
+                                    className="p-1 hover:bg-[#ede5d2] rounded text-[#756758] hover:text-[#2c2620] transition"
+                                  >
+                                    <Pencil className="h-3.5 w-3.5" />
+                                  </button>
+                                </div>
+                              </div>
+                              {isUnderDescribed ? (
+                                <div className="flex items-center justify-between p-2.5 bg-[#fdf5eb] rounded border border-[#f3d19e] text-xs text-[#8b5a2b]">
+                                  <span className="flex items-center gap-1.5 font-medium">
+                                    <AlertTriangle className="h-3.5 w-3.5 text-[#c05621] shrink-0" />
+                                    Projeto selecionado sem descrição técnica ou resultados detalhados.
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOpenEditById('project', proj.id, proj)}
+                                    className="flex items-center gap-1 text-[11px] font-bold text-[#8b5a2b] hover:text-[#5c3c1a] bg-white px-2 py-1 rounded border border-[#dfcaa7] shrink-0 shadow-2xs"
+                                  >
+                                    <Edit3 className="h-3 w-3" />
+                                    Completar
+                                  </button>
+                                </div>
+                              ) : (
+                                <ul className="text-sm text-[#42392f] space-y-1.5 list-disc list-inside font-serif mt-1">
+                                  {bullets.map((b, i) => (
+                                    <li key={i} className="text-sm leading-relaxed">
+                                      {b.replace(/\\textbf\{([^}]+)\}/g, '$1')}
+                                    </li>
+                                  ))}
+                                </ul>
+                              )}
                             </div>
-                            <ul className="text-sm text-[#42392f] space-y-1.5 list-disc list-inside font-serif mt-1">
-                              {(proj.formatted_bullets || proj.raw_bullets)?.map((b, i) => (
-                                <li key={i} className="text-sm leading-relaxed">
-                                  {b.replace(/\\textbf\{([^}]+)\}/g, '$1')}
-                                </li>
-                              ))}
-                            </ul>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     </div>
 
@@ -2550,9 +2751,32 @@ export default function App() {
                                   <span className="text-xs font-mono font-bold text-[#2c2620] bg-[#f0e8d7] px-2.5 py-0.5 rounded border border-[#d6c9b1]">
                                     Score: {aw.score?.toFixed(3)}
                                   </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOpenEditById('award', aw.id, aw)}
+                                    title="Editar esta conquista no perfil"
+                                    className="p-1 hover:bg-[#ede5d2] rounded text-[#756758] hover:text-[#2c2620] transition"
+                                  >
+                                    <Pencil className="h-3.5 w-3.5" />
+                                  </button>
                                 </div>
                               </div>
-                              {aw.description && (
+                              {!aw.description?.trim() ? (
+                                <div className="flex items-center justify-between p-2.5 bg-[#fdf5eb] rounded border border-[#f3d19e] text-xs text-[#8b5a2b]">
+                                  <span className="flex items-center gap-1.5 font-medium">
+                                    <AlertTriangle className="h-3.5 w-3.5 text-[#c05621] shrink-0" />
+                                    Descrição ausente — informe o escopo ou tecnologias desta conquista/certificado.
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOpenEditById('award', aw.id, aw)}
+                                    className="flex items-center gap-1 text-[11px] font-bold text-[#8b5a2b] hover:text-[#5c3c1a] bg-white px-2 py-1 rounded border border-[#dfcaa7] shrink-0 shadow-2xs"
+                                  >
+                                    <Edit3 className="h-3 w-3" />
+                                    Completar
+                                  </button>
+                                </div>
+                              ) : (
                                 <p className="text-sm text-[#42392f] font-serif leading-relaxed">
                                   {aw.description}
                                 </p>
@@ -2809,9 +3033,27 @@ export default function App() {
                     />
                   </div>
                   <div>
-                    <label className="block text-[11px] font-bold text-[#5e5142] uppercase mb-1">
-                      Bullets de Impacto (um por linha)
-                    </label>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-[11px] font-bold text-[#5e5142] uppercase">
+                        Bullets de Impacto (um por linha)
+                      </label>
+                      <button
+                        type="button"
+                        disabled={isSuggesting}
+                        onClick={() =>
+                          handleSuggestDescription(
+                            'experience',
+                            `${editingItem.form.role} @ ${editingItem.form.company}`,
+                            editingItem.form.location,
+                            editingItem.form.raw_bullets
+                          )
+                        }
+                        className="text-[11px] font-sans font-bold text-[#8b5a2b] hover:text-[#5c3c1a] bg-[#f8f1e3] border border-[#e2d0b6] px-2 py-0.5 rounded flex items-center gap-1 transition disabled:opacity-50"
+                      >
+                        <Sparkles className="h-3 w-3" />
+                        <span>{isSuggesting ? 'Sugerindo...' : 'Sugerir com IA'}</span>
+                      </button>
+                    </div>
                     <textarea
                       rows={4}
                       value={editingItem.form.raw_bullets || ''}
@@ -2871,9 +3113,27 @@ export default function App() {
                     </div>
                   </div>
                   <div>
-                    <label className="block text-[11px] font-bold text-[#5e5142] uppercase mb-1">
-                      Bullets de Descrição & Métricas (um por linha)
-                    </label>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-[11px] font-bold text-[#5e5142] uppercase">
+                        Bullets de Descrição & Métricas (um por linha)
+                      </label>
+                      <button
+                        type="button"
+                        disabled={isSuggesting}
+                        onClick={() =>
+                          handleSuggestDescription(
+                            'project',
+                            editingItem.form.title,
+                            editingItem.form.subtitle,
+                            editingItem.form.raw_bullets
+                          )
+                        }
+                        className="text-[11px] font-sans font-bold text-[#8b5a2b] hover:text-[#5c3c1a] bg-[#f8f1e3] border border-[#e2d0b6] px-2 py-0.5 rounded flex items-center gap-1 transition disabled:opacity-50"
+                      >
+                        <Sparkles className="h-3 w-3" />
+                        <span>{isSuggesting ? 'Sugerindo...' : 'Sugerir com IA'}</span>
+                      </button>
+                    </div>
                     <textarea
                       rows={3}
                       value={editingItem.form.raw_bullets || ''}
@@ -2909,7 +3169,27 @@ export default function App() {
                     />
                   </div>
                   <div>
-                    <label className="block text-[11px] font-bold text-[#5e5142] uppercase mb-1">Descrição / Detalhes</label>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-[11px] font-bold text-[#5e5142] uppercase">
+                        Descrição / Detalhes
+                      </label>
+                      <button
+                        type="button"
+                        disabled={isSuggesting}
+                        onClick={() =>
+                          handleSuggestDescription(
+                            'award',
+                            editingItem.form.title,
+                            editingItem.form.period_or_date,
+                            editingItem.form.description
+                          )
+                        }
+                        className="text-[11px] font-sans font-bold text-[#8b5a2b] hover:text-[#5c3c1a] bg-[#f8f1e3] border border-[#e2d0b6] px-2 py-0.5 rounded flex items-center gap-1 transition disabled:opacity-50"
+                      >
+                        <Sparkles className="h-3 w-3" />
+                        <span>{isSuggesting ? 'Sugerindo...' : 'Sugerir com IA'}</span>
+                      </button>
+                    </div>
                     <textarea
                       rows={2}
                       value={editingItem.form.description || ''}

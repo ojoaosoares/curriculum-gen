@@ -59,6 +59,14 @@ JSON SCHEMA:
       "period_or_date": "Year or date",
       "description": "Short explanation of the achievement"
     }
+  ],
+  "projects": [
+    {
+      "title": "Project or Publication Title",
+      "subtitle": "Short tech stack or 'Publicação Técnica'",
+      "tags": ["Tech1", "Tech2"],
+      "raw_bullets": ["Description or key outcome"]
+    }
   ]
 }
 
@@ -68,10 +76,11 @@ CRITICAL RULES:
 3. Extract relevant technical tags for each experience (e.g. languages, frameworks, libraries, tools).
 4. Extract ALL education entries (institutions, degrees, periods).
 5. Extract ALL skills and languages spoken into appropriate categories in 'skills'.
-6. If the text is from a LinkedIn PDF, note that email might be broken across lines (e.g. 'user@gmail.c\\nom' -> 'user@gmail.com') and sidebar sections include 'Contato', 'Principais competências', 'Languages', 'Certifications', 'Honors-Awards'. Extract ALL of them.
+6. If the text is from a LinkedIn PDF, note that email might be broken across lines (e.g. 'user@gmail.c\\nom' -> 'user@gmail.com') and sidebar sections include 'Contato', 'Principais competências', 'Languages', 'Certifications', 'Honors-Awards', 'Publications'. Extract ALL of them.
 7. For dates and periods, strip duration counts in parentheses like '(2 anos 5 meses)' or '(1 yr 2 mos)' and keep them compact (e.g. '09/2025 - Present').
-8. For awards and certifications, NEVER fabricate placeholder or fictional descriptions. If the text does not contain an explanation, leave 'description': ''. Do not duplicate the year in both 'title' and 'period_or_date'.
-9. Output ONLY the JSON object. No markdown code blocks, no intro, no outro.
+8. Extract any publications or projects under 'Projects', 'Projetos', or 'Publications' into the 'projects' array.
+9. For awards and certifications, NEVER fabricate placeholder or fictional descriptions. If the text does not contain an explanation, leave 'description': ''. Do not duplicate the year in both 'title' and 'period_or_date'.
+10. Output ONLY the JSON object. No markdown code blocks, no intro, no outro.
 
 RESUME TEXT:
 """
@@ -464,8 +473,13 @@ class ResumePDFIngestor:
 
         # 5. Awards & Leadership
         awards = []
+        continuation_prefixes = (
+            "Test", "Engineering", "Symposium", "Phase", "Semana", "Conhecimento", "Basics",
+            "Systems", "Computing", "(", "[", "eBPF", "GPU", "DNS", "com ", "em ", "no ", "na ", "de ", "da ", "do ", "dos ", "das "
+        )
+
         honors_m = re.search(
-            r"(?:Honors-Awards|Premiações|Prêmios)\s*\n(.*?)(?:\n(?:Publications|Certifications|Languages|Contato|Resumo|Experiência|Formação|\Z))",
+            r"(?:Honors-Awards|Premiações|Prêmios)\s*\n(.*?)(?:\n(?:Publications|Publicações|Certifications|Certificações|Languages|Contato|Resumo|Experiência|Formação|\Z))",
             text,
             re.DOTALL | re.IGNORECASE,
         )
@@ -486,7 +500,7 @@ class ResumePDFIngestor:
 
         # Certifications
         cert_m = re.search(
-            r"(?:Certifications|Certificações)\s*\n(.*?)(?:\n(?:Honors-Awards|Premiações|Publications|Languages|Contato|Resumo|Experiência|Formação|\Z))",
+            r"(?:Certifications|Certificações)\s*\n(.*?)(?:\n(?:Honors-Awards|Premiações|Publications|Publicações|Languages|Contato|Resumo|Experiência|Formação|\Z))",
             text,
             re.DOTALL | re.IGNORECASE,
         )
@@ -496,7 +510,7 @@ class ResumePDFIngestor:
             certs = []
             curr: List[str] = []
             for line in raw_lines:
-                if curr and (line.startswith(("Test", "Engineering", "Symposium", "Phase")) or not line[0].isupper()):
+                if curr and (line.startswith(continuation_prefixes) or not line[0].isupper()):
                     curr.append(line)
                 else:
                     if curr:
@@ -516,6 +530,59 @@ class ResumePDFIngestor:
                     "description": "",
                 })
 
+        # 6. Projects & Publications
+        projects = []
+        pub_m = re.search(
+            r"(?:Publications|Publicações)\s*\n(.*?)(?:\n(?:Honors-Awards|Premiações|Certifications|Certificações|Languages|Contato|Resumo|Experiência|Formação|\Z))",
+            text,
+            re.DOTALL | re.IGNORECASE,
+        )
+        if pub_m:
+            p_text = pub_m.group(1).strip()
+            raw_p_lines = [l.strip() for l in p_text.splitlines() if l.strip()]
+            pubs = []
+            curr_p: List[str] = []
+            for line in raw_p_lines:
+                if curr_p and (line.startswith(continuation_prefixes) or not line[0].isupper()):
+                    curr_p.append(line)
+                else:
+                    if curr_p:
+                        pubs.append(" ".join(curr_p))
+                    curr_p = [line]
+            if curr_p:
+                pubs.append(" ".join(curr_p))
+
+            for p_title in pubs:
+                clean_pt = re.sub(r"\s+", " ", p_title).strip(" -–:")
+                if clean_pt:
+                    projects.append({
+                        "id": f"proj-pub-{len(projects)+1}",
+                        "title": clean_pt,
+                        "subtitle": "Publicação Técnica",
+                        "tags": self._extract_tech_tags(clean_pt),
+                        "raw_bullets": [],
+                    })
+
+        proj_m = re.search(
+            r"(?:Projetos|Projects)\s*\n(.*?)(?:\n(?:Honors-Awards|Premiações|Certifications|Certificações|Publications|Publicações|Languages|Contato|Resumo|Experiência|Formação|\Z))",
+            text,
+            re.DOTALL | re.IGNORECASE,
+        )
+        if proj_m:
+            pr_text = proj_m.group(1).strip()
+            pr_lines = [l.strip() for l in pr_text.splitlines() if l.strip()]
+            for pr_line in pr_lines:
+                if len(pr_line) > 3 and not pr_line.startswith(("◦", "•", "-", "*")):
+                    clean_pr = re.sub(r"\s+", " ", pr_line).strip(" -–:")
+                    if clean_pr:
+                        projects.append({
+                            "id": f"proj-pdf-{len(projects)+1}",
+                            "title": clean_pr,
+                            "subtitle": "Projeto",
+                            "tags": self._extract_tech_tags(clean_pr),
+                            "raw_bullets": [],
+                        })
+
         return {
             "personal": {
                 "name": name,
@@ -528,6 +595,7 @@ class ResumePDFIngestor:
             },
             "education": education,
             "experiences": experiences,
+            "projects": projects,
             "skills": skills_dict,
             "awards_and_leadership": awards,
         }
@@ -558,6 +626,16 @@ class ResumePDFIngestor:
             p_companies = {(e.get("company") or "").lower() for e in primary_exps}
             extra_exps = [e for e in fallback_exps if (e.get("company") or "").lower() not in p_companies]
             merged["experiences"] = primary_exps + extra_exps
+
+        # Projects: if LLM returned 0, use fallback
+        primary_projs = primary.get("projects") or []
+        fallback_projs = fallback.get("projects") or []
+        if not primary_projs:
+            merged["projects"] = fallback_projs
+        else:
+            p_titles = {(p.get("title") or "").lower() for p in primary_projs}
+            extra_projs = [p for p in fallback_projs if (p.get("title") or "").lower() not in p_titles]
+            merged["projects"] = primary_projs + extra_projs
 
         # Education: if LLM returned 0 education entries, use fallback
         if not primary.get("education") and fallback.get("education"):
@@ -591,6 +669,7 @@ class ResumePDFIngestor:
         strategy: str = "",
     ) -> Dict[str, Any]:
         experiences = parsed.get("experiences", [])
+        projects = parsed.get("projects", [])
         education = parsed.get("education", [])
         skills = parsed.get("skills", {})
         awards = parsed.get("awards_and_leadership", [])
@@ -598,6 +677,9 @@ class ResumePDFIngestor:
         for i, exp in enumerate(experiences):
             if not exp.get("id"):
                 exp["id"] = f"exp-pdf-{i+1}"
+        for i, proj in enumerate(projects):
+            if not proj.get("id"):
+                proj["id"] = f"proj-pdf-{i+1}"
         for i, aw in enumerate(awards):
             if not aw.get("id"):
                 aw["id"] = f"award-pdf-{i+1}"
@@ -613,6 +695,7 @@ class ResumePDFIngestor:
             "profile_data": parsed,
             "counts": {
                 "experiences": len(experiences),
+                "projects": len(projects),
                 "education": len(education),
                 "skills": total_skills,
                 "awards": len(awards),

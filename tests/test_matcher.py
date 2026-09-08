@@ -80,3 +80,32 @@ def test_matcher_analyze_ats():
     assert "docker" in res["matched_keywords"]
     assert "kubernetes" in res["missing_keywords"]
     assert len(res["recommendations"]) > 0
+
+
+def test_matcher_detects_incomplete_items():
+    from curriculum_gen.models import AwardOrLeadershipItem, ProjectItem
+    job = JobContext(job_description="Networking eBPF engineer")
+    matcher = MatcherEngine(job)
+
+    # Incomplete experience (empty bullets)
+    exp = ExperienceItem(id="exp-1", role="Dev", company="TechCorp", raw_bullets=[])
+    # Incomplete project (empty bullets)
+    proj = ProjectItem(id="proj-1", title="AtesN-DS: Acelerando DNS com eBPF", raw_bullets=[])
+    # Incomplete award (empty description)
+    award = AwardOrLeadershipItem(id="aw-1", title="Networking Basics (Cisco)", description="")
+
+    profile = UserProfile(
+        personal=ContactInfo(name="Dev"),
+        experiences=[exp],
+        projects=[proj],
+        awards_and_leadership=[award],
+    )
+
+    res = matcher.analyze_ats(profile, [exp], [proj], [award])
+    assert "incomplete_items" in res
+    assert len(res["incomplete_items"]) == 3
+
+    types = {item["type"] for item in res["incomplete_items"]}
+    assert types == {"experience", "project", "award"}
+    assert any("Atenção ATS" in r for r in res["recommendations"])
+

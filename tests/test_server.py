@@ -197,3 +197,50 @@ skills: {}
     assert res.json()["personal"]["name"] == "Root Configured User"
 
 
+def test_suggest_description_endpoint():
+    from fastapi.testclient import TestClient
+    from curriculum_gen.server.app import app
+
+    client = TestClient(app)
+
+    # 1. Cisco certification suggestion
+    res1 = client.post(
+        "/api/suggest-description",
+        json={
+            "item_type": "award",
+            "title": "Networking Basics (Cisco)",
+            "subtitle_or_org": "Cisco",
+            "language": "pt",
+        },
+    )
+    assert res1.status_code == 200
+    assert "redes" in res1.json()["suggestion"].lower()
+
+    # 2. eBPF / DNS project suggestion
+    res2 = client.post(
+        "/api/suggest-description",
+        json={
+            "item_type": "project",
+            "title": "AtesN-DS: Acelerando o DNS com eBPF",
+            "subtitle_or_org": "Publicação Técnica",
+            "language": "pt",
+        },
+    )
+    assert res2.status_code == 200
+    assert "ebpf" in res2.json()["suggestion"].lower() or "dns" in res2.json()["suggestion"].lower()
+
+    # 3. Academic distinction suggestion
+    res3 = client.post(
+        "/api/suggest-description",
+        json={
+            "item_type": "award",
+            "title": "Relevância Acadêmica na Semana do Conhecimento UFMG 2025",
+            "subtitle_or_org": "UFMG",
+            "language": "pt",
+        },
+    )
+    assert res3.status_code == 200
+    assert "ufmg" in res3.json()["suggestion"].lower() or "acadêmico" in res3.json()["suggestion"].lower()
+
+
+

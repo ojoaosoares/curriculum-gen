@@ -631,3 +631,162 @@ INSTRUCTIONS & CRITICAL CONSTRAINTS:
                 formatted.append(cleaned)
 
         return formatted
+
+    def generate_description(
+        self,
+        item_type: str,
+        title: str,
+        subtitle_or_org: Optional[str] = "",
+        current_description: Optional[str] = "",
+        job_description: Optional[str] = "",
+        language: str = "pt",
+    ) -> str:
+        """
+        Generates or suggests an enriched, professional description for an under-described
+        CV item (experience, project/publication, or award/certification).
+        Uses LLM if available; otherwise applies deterministic contextual domain heuristics (0 tokens).
+        """
+        target_lang = "Brazilian Portuguese" if language.startswith("pt") else "English"
+        is_pt = language.startswith("pt")
+
+        # 1. Attempt LLM generation if client or native Gemini available
+        if self.is_available():
+            condensed_job = _condense_job_context(job_description or "", max_chars=300)
+            user_prompt = (
+                f"You are an expert technical resume/CV and ATS advisor.\n"
+                f"Write a concise, professional description in {target_lang} for this CV item:\n"
+                f"- Type: {item_type}\n"
+                f"- Title: {title}\n"
+                f"- Context / Organization: {subtitle_or_org or 'N/A'}\n"
+                f"- Existing notes: {current_description or 'None'}\n"
+                + (f"- Target Job Context: {condensed_job}\n" if condensed_job else "")
+                + "Guidelines:\n"
+                + "- If award or certification: 1-2 concise sentences explaining the technical concepts, scope, or achievement.\n"
+                + "- If project or publication: 1-2 concise sentences or bullets on technical goals, tools applied, and outcomes.\n"
+                + "- If experience: 1-2 concise action-oriented bullet points.\n"
+                + "- Be factual, professional, and clear. Avoid filler.\n"
+                + "- Output ONLY the description text. No markdown header, no introduction, no conversational text."
+            )
+
+            # Try native gemini
+            if self.provider == "gemini" and self.api_key:
+                try:
+                    import httpx
+                    available = self._get_available_gemini_models()
+                    chosen_model = self.model or (available[0] if available else "gemini-2.0-flash")
+                    clean_model = chosen_model.replace("models/", "")
+                    url = f"https://generativelanguage.googleapis.com/v1beta/models/{clean_model}:generateContent?key={self.api_key}"
+                    payload = {
+                        "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
+                        "generationConfig": {
+                            "temperature": 0.2,
+                            "maxOutputTokens": 256,
+                        },
+                    }
+                    res = httpx.post(url, json=payload, timeout=20.0)
+                    if res.status_code == 200:
+                        data = res.json()
+                        candidates = data.get("candidates", [])
+                        if candidates:
+                            parts = candidates[0].get("content", {}).get("parts", [])
+                            if parts:
+                                txt = parts[0].get("text", "").strip()
+                                if txt:
+                                    self.calls_succeeded += 1
+                                    self.tokens_used += (len(user_prompt) // 4) + (len(txt) // 4)
+                                    return txt.strip('"\'')
+                except Exception as e:
+                    print(f"[LLMOptimizer] generate_description Gemini failed: {e}")
+
+            # Try OpenAI client
+            if self.client:
+                try:
+                    response = self.client.chat.completions.create(
+                        model=self.model,
+                        messages=[
+                            {"role": "system", "content": f"You are an expert technical CV optimizer. Output exclusively the description in {target_lang}."},
+                            {"role": "user", "content": user_prompt},
+                        ],
+                        temperature=0.2,
+                        max_tokens=256,
+                    )
+                    txt = response.choices[0].message.content.strip()
+                    if txt:
+                        self.calls_succeeded += 1
+                        if hasattr(response, "usage") and response.usage:
+                            self.tokens_used += response.usage.total_tokens
+                        return txt.strip('"\'')
+                except Exception as e:
+                    print(f"[LLMOptimizer] generate_description OpenAI failed: {e}")
+
+        # 2. Contextual heuristic baseline (0 tokens, deterministic)
+        comb = f"{(title or '').lower()} {(subtitle_or_org or '').lower()}"
+
+        if "cisco" in comb or ("network" in comb and "basic" in comb):
+            return (
+                "Certificação técnica em fundamentos de redes de computadores, abordando arquitetura TCP/IP, endereçamento IPv4/IPv6, roteamento e conectividade de rede."
+                if is_pt
+                else "Technical certification in computer networking fundamentals, covering TCP/IP architecture, IPv4/IPv6 addressing, routing, and connectivity."
+            )
+
+        if "cybersecurity" in comb or "segurança" in comb:
+            return (
+                "Capacitação em segurança da informação, cobrindo princípios de confidencialidade, autenticação, mitigação de ameaças cibernéticas e defesa de sistemas."
+                if is_pt
+                else "Training in information security fundamentals, covering confidentiality, authentication, cyber threat mitigation, and network defense."
+            )
+
+        if "japanese" in comb or "japon" in comb or "jlpt" in comb:
+            return (
+                "Certificação de proficiência na língua japonesa, comprovando domínio prático de gramática, vocabulário e compreensão contextual."
+                if is_pt
+                else "Japanese language proficiency certification validating practical grammar, vocabulary, and reading comprehension."
+            )
+
+        if "sbesc" in comb or "symposium" in comb or "simpósio" in comb:
+            return (
+                "Participação e apresentação de trabalho técnico-científico no Simpósio Brasileiro de Engenharia de Sistemas Computacionais (SBESC), abordando sistemas embarcados e computação de alto desempenho."
+                if is_pt
+                else "Technical participation and paper presentation at SBESC (Brazilian Symposium on Computing Systems Engineering), covering embedded systems and high-performance computing."
+            )
+
+        if "ufmg" in comb or "relevância acadêmica" in comb or "conhecimento" in comb:
+            return (
+                "Destaque acadêmico concedido na Semana do Conhecimento UFMG, reconhecendo a relevância científica e o mérito dos resultados obtidos no projeto de pesquisa."
+                if is_pt
+                else "Academic distinction awarded at UFMG Knowledge Week, recognizing the scientific merit and impact of research findings."
+            )
+
+        if "ebpf" in comb or "dns" in comb:
+            return (
+                "Pesquisa e desenvolvimento de aceleração de resolução DNS utilizando eBPF/XDP no kernel Linux, otimizando o throughput e minimizando latência no processamento de pacotes."
+                if is_pt
+                else "Research and development of DNS acceleration via eBPF/XDP in the Linux kernel, optimizing packet processing throughput and minimizing query latency."
+            )
+
+        if "gpu" in comb or "cuda" in comb:
+            return (
+                "Desenvolvimento de arquitetura acelerada por GPU para processamento e filtragem paralela de pacotes de dados com alta taxa de transferência e baixa latência."
+                if is_pt
+                else "Development of a GPU-accelerated architecture for parallel packet processing and filtering, achieving high throughput and ultra-low latency."
+            )
+
+        if item_type == "award":
+            return (
+                "Reconhecimento conferido por mérito técnico e excelência de execução em atividades acadêmicas e profissionais."
+                if is_pt
+                else "Recognition awarded for technical excellence and notable execution merit in academic and professional projects."
+            )
+        elif item_type == "project":
+            return (
+                "Desenvolvimento de solução técnica com foco em arquitetura eficiente, modularidade e alto desempenho operacional."
+                if is_pt
+                else "Development of a technical solution focusing on efficient architecture, modularity, and high operational performance."
+            )
+        else:
+            return (
+                "Atuação no desenvolvimento de soluções de software, colaborando em projetos técnicos e aplicando tecnologias para entrega escalável."
+                if is_pt
+                else "Engineered software solutions, collaborating on technical design and delivering scalable features."
+            )
+

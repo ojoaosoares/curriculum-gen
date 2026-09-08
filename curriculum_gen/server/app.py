@@ -279,6 +279,39 @@ async def ingest_resume_pdf(
         raise HTTPException(status_code=400, detail=f"Erro ao processar PDF: {str(e)}")
 
 
+class SuggestDescriptionRequest(BaseModel):
+    item_type: str
+    title: str
+    subtitle_or_org: Optional[str] = ""
+    current_description: Optional[str] = ""
+    job_description: Optional[str] = ""
+    language: Optional[str] = "pt"
+    api_key: Optional[str] = None
+    provider: Optional[str] = None
+    model: Optional[str] = None
+    base_url: Optional[str] = None
+
+
+@app.post("/api/suggest-description")
+def suggest_description(req: SuggestDescriptionRequest):
+    clean_key = req.api_key.strip().strip('"').strip("'") if req.api_key else None
+    llm = LLMOptimizer(
+        api_key=clean_key,
+        base_url=req.base_url,
+        model=req.model,
+        provider=req.provider,
+    )
+    suggestion = llm.generate_description(
+        item_type=req.item_type,
+        title=req.title,
+        subtitle_or_org=req.subtitle_or_org or "",
+        current_description=req.current_description or "",
+        job_description=req.job_description or "",
+        language=req.language or "pt",
+    )
+    return {"suggestion": suggestion}
+
+
 class VerifyKeyRequest(BaseModel):
     api_key: str
     model: Optional[str] = None
