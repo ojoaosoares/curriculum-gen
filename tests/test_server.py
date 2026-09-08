@@ -441,3 +441,90 @@ Apresentação científica do projeto AtesN-DS no XV SBESC e condecoração com 
     assert "Draft 1" not in extracted
     assert "Core Achievement" not in extracted
     assert "Apresentação científica do projeto AtesN-DS" in extracted
+
+
+def test_optimize_title_endpoint():
+    from fastapi.testclient import TestClient
+    from curriculum_gen.server.app import app
+
+    client = TestClient(app)
+
+    # 1. Long symposium presentation with date in second column
+    res1 = client.post(
+        "/api/optimize-title",
+        json={
+            "title": "Apresentação e Participação no XV Symposium on Computing Systems Engineering (SBESC 2025)",
+            "item_type": "award",
+            "period_or_link": "2025",
+            "language": "pt",
+        },
+    )
+    assert res1.status_code == 200
+    data1 = res1.json()
+    assert data1["chars"] <= 44
+    assert len(data1["optimized_title"]) <= 44
+    assert "SBESC" in data1["optimized_title"]
+    assert "2025" not in data1["optimized_title"]  # Stripped redundant date
+
+    # 2. Very long fused award
+    res2 = client.post(
+        "/api/optimize-title",
+        json={
+            "title": "Apresentações Científicas & Distinção Acadêmica: AtesN-DS (SBESC & Semana do Conhecimento UFMG)",
+            "item_type": "award",
+            "period_or_link": "2025",
+            "language": "pt",
+        },
+    )
+    assert res2.status_code == 200
+    data2 = res2.json()
+    assert data2["chars"] <= 45
+    assert len(data2["optimized_title"]) <= 45
+    assert "AtesN-DS" in data2["optimized_title"]
+
+    # 3. Certification with verbose prefix
+    res3 = client.post(
+        "/api/optimize-title",
+        json={
+            "title": "Japanese-Language Proficiency Test (Phase 1)",
+            "item_type": "award",
+            "language": "pt",
+        },
+    )
+    assert res3.status_code == 200
+    data3 = res3.json()
+    assert len(data3["optimized_title"]) <= 44
+    assert "JLPT" in data3["optimized_title"]
+
+
+def test_suggest_fusion_compact_title():
+    from fastapi.testclient import TestClient
+    from curriculum_gen.server.app import app
+
+    client = TestClient(app)
+
+    items = [
+        {
+            "title": "Apresentação e Participação no XV Symposium on Computing Systems Engineering (SBESC 2025)",
+            "period_or_date": "2025",
+            "description": "Apresentação do artigo AtesN-DS.",
+        },
+        {
+            "title": "Relevância Acadêmica na Semana do Conhecimento UFMG 2025",
+            "period_or_date": "2025",
+            "description": "Prêmio de relevância acadêmica pela pesquisa no Lecom.",
+        },
+    ]
+
+    res = client.post(
+        "/api/suggest-fusion",
+        json={
+            "items": items,
+            "language": "pt",
+        },
+    )
+    assert res.status_code == 200
+    fused = res.json()["fused_item"]
+    assert len(fused["title"]) <= 45  # Single line requirement (<45-48 chars)
+    assert "AtesN-DS" in fused["title"]
+    assert "SBESC" in fused["title"] or "UFMG" in fused["title"]

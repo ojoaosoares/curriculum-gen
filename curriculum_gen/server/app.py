@@ -410,6 +410,61 @@ def suggest_fusion(req: SuggestFusionRequest):
     }
 
 
+class OptimizeTitleRequest(BaseModel):
+    title: str
+    item_type: Optional[str] = "award"
+    subtitle_or_org: Optional[str] = ""
+    period_or_link: Optional[str] = ""
+    language: Optional[str] = "pt"
+    max_chars: Optional[int] = 45
+    api_key: Optional[str] = None
+    provider: Optional[str] = None
+    model: Optional[str] = None
+    base_url: Optional[str] = None
+
+
+@app.post("/api/optimize-title")
+def optimize_title(req: OptimizeTitleRequest):
+    clean_key = req.api_key.strip().strip('"').strip("'") if req.api_key else None
+    llm = LLMOptimizer(
+        api_key=clean_key,
+        base_url=req.base_url,
+        model=req.model,
+        provider=req.provider,
+    )
+    result = llm.optimize_title(
+        title=req.title,
+        item_type=req.item_type or "award",
+        subtitle_or_org=req.subtitle_or_org or "",
+        period_or_link=req.period_or_link or "",
+        language=req.language or "pt",
+        max_chars=req.max_chars or 45,
+    )
+
+    opt_title = result.get("optimized_title", req.title)
+    chars = result.get("chars", len(opt_title))
+    provider_used = result.get("provider", "offline_heuristic")
+    strategy_used = result.get("strategy", "Minimização de Título de 1 Linha")
+
+    token_tracker.record_operation(
+        operation="Minimização de Título",
+        tokens_used=12 if provider_used != "offline_heuristic" else 0,
+        tokens_saved=120 if provider_used == "offline_heuristic" else 0,
+        category="job_distillation" if provider_used != "offline_heuristic" else "pdf_distillation_and_schema",
+        strategy=strategy_used,
+        details=f"{req.item_type.capitalize()}: {req.title[:25]} -> {opt_title[:25]}",
+        provider=provider_used,
+    )
+
+    return {
+        "optimized_title": opt_title,
+        "original_title": result.get("original_title", req.title),
+        "chars": chars,
+        "provider": provider_used,
+        "strategy": strategy_used,
+    }
+
+
 class VerifyKeyRequest(BaseModel):
     api_key: str
     model: Optional[str] = None

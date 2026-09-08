@@ -31,6 +31,7 @@ import {
   Edit3,
   GitMerge,
   Tag,
+  Scissors,
 } from 'lucide-react';
 
 const extractErrorMessage = (errData, defaultMsg = 'Ocorreu um erro na operação.') => {
@@ -171,6 +172,7 @@ export default function App() {
   // Profile Item Editor Modal State
   const [editingItem, setEditingItem] = useState(null);
   const [isSuggesting, setIsSuggesting] = useState(false);
+  const [isOptimizingTitle, setIsOptimizingTitle] = useState(false);
   const [aiSuggestionState, setAiSuggestionState] = useState(null);
 
   // Skill Management & Association State
@@ -802,6 +804,45 @@ export default function App() {
 
   const handleDismissAiSuggestion = () => {
     setAiSuggestionState(null);
+  };
+
+  const handleOptimizeTitle = async (
+    itemType,
+    currentTitle,
+    subtitleOrOrg = '',
+    periodOrLink = '',
+    onSuccess
+  ) => {
+    if (!currentTitle || !currentTitle.trim()) return;
+    setIsOptimizingTitle(true);
+    try {
+      const res = await fetch('/api/optimize-title', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: currentTitle.trim(),
+          item_type: itemType,
+          subtitle_or_org: subtitleOrOrg || '',
+          period_or_link: periodOrLink || '',
+          language: language || 'pt',
+          max_chars: 44,
+          api_key: apiKey || null,
+          provider: provider || null,
+          model: model || null,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.optimized_title && onSuccess) {
+          onSuccess(data.optimized_title);
+        }
+        fetchTokenStats();
+      }
+    } catch (err) {
+      console.error('Erro ao otimizar título:', err);
+    } finally {
+      setIsOptimizingTitle(false);
+    }
   };
 
   const handleOpenFusionModal = () => {
@@ -1901,7 +1942,18 @@ export default function App() {
                         <div key={idx} className="p-3 rounded border border-[#dfd5be] bg-[#fffdfa] text-xs space-y-1">
                           <div className="flex justify-between items-start">
                             <div>
-                              <span className="font-bold text-sm text-[#221c16] block">{proj.title}</span>
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="font-bold text-sm text-[#221c16]">{proj.title}</span>
+                                {proj.title && proj.title.length > 44 && (
+                                  <span
+                                    className="text-[9px] font-mono bg-[#fff7ed] text-[#c2410c] border border-[#fed7aa] px-1.5 py-0.2 rounded font-medium inline-flex items-center gap-0.5"
+                                    title={`${proj.title.length} caracteres: pode quebrar em 2 linhas`}
+                                  >
+                                    <AlertTriangle className="h-2.5 w-2.5" />
+                                    {proj.title.length} carac.
+                                  </span>
+                                )}
+                              </div>
                               {proj.subtitle && <span className="text-[#635749] text-xs">{proj.subtitle}</span>}
                             </div>
                             <div className="flex items-center gap-1">
@@ -1982,7 +2034,18 @@ export default function App() {
                         <div key={idx} className="p-2.5 rounded border border-[#dfd5be] bg-[#fffdfa] text-xs">
                           <div className="flex justify-between items-start">
                             <div>
-                              <span className="font-bold text-xs text-[#221c16] block">{aw.title}</span>
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="font-bold text-xs text-[#221c16]">{aw.title}</span>
+                                {aw.title && aw.title.length > 44 && (
+                                   <span
+                                     className="text-[9px] font-mono bg-[#fff7ed] text-[#c2410c] border border-[#fed7aa] px-1.5 py-0.2 rounded font-medium inline-flex items-center gap-0.5"
+                                     title={`${aw.title.length} caracteres: pode quebrar em 2 linhas com a data ao lado`}
+                                   >
+                                     <AlertTriangle className="h-2.5 w-2.5" />
+                                     {aw.title.length} carac. (2 linhas)
+                                   </span>
+                                 )}
+                              </div>
                               {aw.description ? (
                                 <span className="text-[#635749] text-[11px] mt-0.5 block">{aw.description}</span>
                               ) : (
@@ -3719,7 +3782,48 @@ export default function App() {
                 <>
                   <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-[11px] font-bold text-[#5e5142] uppercase mb-1">Cargo / Função *</label>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="block text-[11px] font-bold text-[#5e5142] uppercase">Cargo / Função *</label>
+                        <div className="flex items-center gap-1.5">
+                          {editingItem.form.role && (
+                            <span
+                              className={`text-[10px] font-mono font-medium ${
+                                (editingItem.form.role || '').length > 40
+                                  ? 'text-[#b45309] font-bold'
+                                  : 'text-[#206634]'
+                              }`}
+                              title={
+                                (editingItem.form.role || '').length > 40
+                                  ? 'Pode quebrar em 2 linhas com a empresa/data no CV'
+                                  : 'Cabe confortavelmente em 1 linha'
+                              }
+                            >
+                              {(editingItem.form.role || '').length} carac.
+                            </span>
+                          )}
+                          <button
+                            type="button"
+                            disabled={isOptimizingTitle || !editingItem.form.role}
+                            onClick={() =>
+                              handleOptimizeTitle(
+                                'experience',
+                                editingItem.form.role,
+                                editingItem.form.company,
+                                editingItem.form.period,
+                                (opt) => setEditingItem((prev) => ({
+                                  ...prev,
+                                  form: { ...prev.form, role: opt },
+                                }))
+                              )
+                            }
+                            className="text-[10px] font-sans font-bold text-[#8b5a2b] hover:text-[#5c3c1a] bg-[#f8f1e3] border border-[#e2d0b6] px-1.5 py-0.5 rounded flex items-center gap-0.5 transition disabled:opacity-50"
+                            title="Minimiza cargo para caber em 1 linha"
+                          >
+                            <Scissors className="h-2.5 w-2.5" />
+                            <span>Minimizar</span>
+                          </button>
+                        </div>
+                      </div>
                       <input
                         type="text"
                         required
@@ -3844,7 +3948,48 @@ export default function App() {
                 <>
                   <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-[11px] font-bold text-[#5e5142] uppercase mb-1">Título do Projeto *</label>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="block text-[11px] font-bold text-[#5e5142] uppercase">Título do Projeto *</label>
+                        <div className="flex items-center gap-1.5">
+                          {editingItem.form.title && (
+                            <span
+                              className={`text-[10px] font-mono font-medium ${
+                                (editingItem.form.title || '').length > 44
+                                  ? 'text-[#b45309] font-bold'
+                                  : 'text-[#206634]'
+                              }`}
+                              title={
+                                (editingItem.form.title || '').length > 44
+                                  ? 'Pode quebrar em 2 linhas com links no CV'
+                                  : 'Cabe em 1 linha'
+                              }
+                            >
+                              {(editingItem.form.title || '').length} carac.
+                            </span>
+                          )}
+                          <button
+                            type="button"
+                            disabled={isOptimizingTitle || !editingItem.form.title}
+                            onClick={() =>
+                              handleOptimizeTitle(
+                                'project',
+                                editingItem.form.title,
+                                editingItem.form.subtitle,
+                                editingItem.form.period,
+                                (opt) => setEditingItem((prev) => ({
+                                  ...prev,
+                                  form: { ...prev.form, title: opt },
+                                }))
+                              )
+                            }
+                            className="text-[10px] font-sans font-bold text-[#8b5a2b] hover:text-[#5c3c1a] bg-[#f8f1e3] border border-[#e2d0b6] px-1.5 py-0.5 rounded flex items-center gap-0.5 transition disabled:opacity-50"
+                            title="Minimiza título do projeto para caber em 1 linha"
+                          >
+                            <Scissors className="h-2.5 w-2.5" />
+                            <span>Minimizar</span>
+                          </button>
+                        </div>
+                      </div>
                       <input
                         type="text"
                         required
@@ -3955,7 +4100,55 @@ export default function App() {
               {editingItem.type === 'award' && (
                 <>
                   <div>
-                    <label className="block text-[11px] font-bold text-[#5e5142] uppercase mb-1">Título da Conquista / Certificação *</label>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-[11px] font-bold text-[#5e5142] uppercase">
+                        Título da Conquista / Certificação *
+                      </label>
+                      <div className="flex items-center gap-2">
+                        {editingItem.form.title && (
+                          <span
+                            className={`text-[10px] font-mono font-medium flex items-center gap-1 ${
+                              (editingItem.form.title || '').length > 44
+                                ? 'text-[#b45309] font-bold'
+                                : 'text-[#206634]'
+                            }`}
+                            title={
+                              (editingItem.form.title || '').length > 44
+                                ? 'Atenção: Título longo (>44 carac.) pode quebrar em 2 linhas ao lado da data no currículo'
+                                : 'Ideal: Cabe em 1 linha'
+                            }
+                          >
+                            {(editingItem.form.title || '').length > 44 ? (
+                              <AlertTriangle className="h-2.5 w-2.5 text-[#b45309]" />
+                            ) : (
+                              <Check className="h-2.5 w-2.5 text-[#206634]" />
+                            )}
+                            {(editingItem.form.title || '').length} carac. { (editingItem.form.title || '').length > 44 ? '(quebra 2 linhas)' : '(1 linha)' }
+                          </span>
+                        )}
+                        <button
+                          type="button"
+                          disabled={isOptimizingTitle || !editingItem.form.title}
+                          onClick={() =>
+                            handleOptimizeTitle(
+                              'award',
+                              editingItem.form.title,
+                              '',
+                              editingItem.form.period_or_date,
+                              (opt) => setEditingItem((prev) => ({
+                                ...prev,
+                                form: { ...prev.form, title: opt },
+                              }))
+                            )
+                          }
+                          className="text-[11px] font-sans font-bold text-[#8b5a2b] hover:text-[#5c3c1a] bg-[#f8f1e3] border border-[#e2d0b6] px-2 py-0.5 rounded flex items-center gap-1 transition disabled:opacity-50"
+                          title="Minimiza e otimiza o título para caber em 1 linha no currículo"
+                        >
+                          <Scissors className="h-3 w-3" />
+                          <span>{isOptimizingTitle ? 'Minimizando...' : 'Minimizar Título (1 Linha)'}</span>
+                        </button>
+                      </div>
+                    </div>
                     <input
                       type="text"
                       required
@@ -4403,7 +4596,49 @@ export default function App() {
 
                 <div className="space-y-2">
                   <div>
-                    <label className="block text-[10px] font-bold text-[#5e5142] uppercase mb-0.5">Título Unificado</label>
+                    <div className="flex items-center justify-between mb-0.5">
+                      <label className="block text-[10px] font-bold text-[#5e5142] uppercase">Título Unificado</label>
+                      <div className="flex items-center gap-1.5">
+                        {fusedResult.fused_item?.title && (
+                          <span
+                            className={`text-[10px] font-mono font-medium flex items-center gap-1 ${
+                              (fusedResult.fused_item.title || '').length > 44
+                                ? 'text-[#b45309] font-bold'
+                                : 'text-[#206634]'
+                            }`}
+                          >
+                            {(fusedResult.fused_item.title || '').length > 44 ? (
+                              <AlertTriangle className="h-2.5 w-2.5 text-[#b45309]" />
+                            ) : (
+                              <Check className="h-2.5 w-2.5 text-[#206634]" />
+                            )}
+                            {(fusedResult.fused_item.title || '').length} carac. { (fusedResult.fused_item.title || '').length > 44 ? '(quebra)' : '(1 linha)' }
+                          </span>
+                        )}
+                        <button
+                          type="button"
+                          disabled={isOptimizingTitle || !fusedResult.fused_item?.title}
+                          onClick={() =>
+                            handleOptimizeTitle(
+                              'award',
+                              fusedResult.fused_item.title,
+                              '',
+                              fusedResult.fused_item.period_or_date,
+                              (opt) =>
+                                setFusedResult((prev) => ({
+                                  ...prev,
+                                  fused_item: { ...prev.fused_item, title: opt },
+                                }))
+                            )
+                          }
+                          className="text-[10px] font-sans font-bold text-[#8b5a2b] hover:text-[#5c3c1a] bg-[#f8f1e3] border border-[#e2d0b6] px-1.5 py-0.5 rounded flex items-center gap-1 transition disabled:opacity-50"
+                          title="Garante que o título fundido caiba estritamente em 1 linha"
+                        >
+                          <Scissors className="h-2.5 w-2.5" />
+                          <span>Minimizar</span>
+                        </button>
+                      </div>
+                    </div>
                     <input
                       type="text"
                       value={fusedResult.fused_item?.title || ''}

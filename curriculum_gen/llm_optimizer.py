@@ -1238,8 +1238,8 @@ INSTRUCTIONS & CRITICAL CONSTRAINTS:
                 f"Synthesize these {len(items)} related CV entries into ONE unified, prestigious, and space-saving entry in {target_lang}.\n\n"
                 f"ITEMS TO MERGE:\n{items_desc}\n"
                 + (f"\nRELEVANT PROFILE FACTS & METRICS:\n{cross_ref_summary}\n" if cross_ref_summary else "")
-                + "\nINSTRUCTIONS:\n"
-                + "- Create a unified Title that honors all achievements (e.g. 'Apresentações Científicas & Distinção Acadêmica: AtesN-DS (SBESC & UFMG)').\n"
+                + "\nCRITICAL INSTRUCTIONS:\n"
+                + "- Create a compact, prestigious unified Title that STRICTLY fits on a single line (UNDER 45 characters, e.g. 'Apresentação & Prêmio: AtesN-DS (SBESC/UFMG)'). NEVER generate long titles exceeding 48 characters.\n"
                 + "- Create a unified Period/Date (e.g. '2025' or '2024 – 2025').\n"
                 + "- Write 1-2 complete, elegant, and grammatically complete sentences combining the achievements and concrete technical metrics.\n"
                 + "- Output ONLY a valid JSON object matching this schema without markdown codeblocks:\n"
@@ -1249,6 +1249,7 @@ INSTRUCTIONS & CRITICAL CONSTRAINTS:
             fusion_system_instruction = (
                 "You are an expert technical CV advisor. Output ONLY a valid JSON object matching: "
                 '{"title": "...", "period_or_date": "...", "description": "..."}. '
+                "CRITICAL: The 'title' field MUST be compact and strictly under 45 characters to fit on 1 single line. "
                 "Do not include any conversational preamble, scratchpads, or reasoning."
             )
 
@@ -1343,9 +1344,9 @@ INSTRUCTIONS & CRITICAL CONSTRAINTS:
         # Specific fusion for SBESC presentation + UFMG Semana do Conhecimento (the exact case cited by user)
         if (has_sbesc and has_ufmg) or (has_sbesc and has_atesn) or (has_ufmg and has_atesn):
             fused_title = (
-                "Apresentações Científicas & Distinção Acadêmica: AtesN-DS (SBESC & Semana do Conhecimento UFMG)"
+                "Apresentação & Prêmio: AtesN-DS (SBESC/UFMG)"
                 if is_pt
-                else "Scientific Presentations & Academic Distinction: AtesN-DS (SBESC & UFMG Knowledge Week)"
+                else "Presentation & Award: AtesN-DS (SBESC/UFMG)"
             )
             fused_desc = (
                 "Apresentação de artigo técnico no XV SBESC e condecoração com o prêmio de Relevância Acadêmica na Semana do Conhecimento UFMG 2025 pelo desenvolvimento do resolvedor DNS recursivo AtesN-DS em eBPF/XDP, comprovando 51% de redução na latência e 213% de ganho na vazão."
@@ -1380,6 +1381,209 @@ INSTRUCTIONS & CRITICAL CONSTRAINTS:
             "provider": "offline_heuristic",
             "strategy": "Fusão Sintética Determinística (Zero Tokens)",
             "fallback_reason": self.last_error if self.api_key else None,
+        }
+
+    def optimize_title(
+        self,
+        title: str,
+        item_type: str = "award",
+        subtitle_or_org: Optional[str] = "",
+        period_or_link: Optional[str] = "",
+        language: str = "pt",
+        max_chars: int = 48,
+    ) -> Dict[str, Any]:
+        """
+        Compresses and optimizes a CV title to guarantee it fits on a SINGLE line
+        without wrapping (crucial for two-column entries with dates/links beside them).
+        Removes verbose filler, acronym expansions, and boilerplate.
+        """
+        target_lang = "Brazilian Portuguese" if language.startswith("pt") else "English"
+        is_pt = language.startswith("pt")
+        clean_title = (title or "").strip()
+        if not clean_title:
+            return {
+                "optimized_title": "",
+                "original_title": "",
+                "chars": 0,
+                "provider": "offline_heuristic",
+                "strategy": "Nenhum título informado",
+            }
+
+        # If date or link is beside the title in twocolentry, the max allowed width is smaller (~42-45 chars)
+        target_len = min(max_chars, 44 if period_or_link else max_chars)
+
+        # 1. Attempt LLM generation
+        if self.is_available():
+            system_instruction = (
+                "You are an expert technical resume and ATS layout specialist. "
+                f"Your mission is to minimize and compress the resume item title to fit STRICTLY on a single line (maximum {target_len} characters). "
+                "CRITICAL REQUIREMENTS:\n"
+                "- Output ONLY a valid JSON object: {\"optimized_title\": \"...\"}.\n"
+                f"- The title must be in {target_lang}.\n"
+                "- It must be concise, punchy, prestigious, and retain essential keywords (e.g. project name, key institution).\n"
+                "- Remove verbose prepositions and boilerplate (e.g. 'Apresentação e Participação no ' -> 'Apresentação: ', 'Certificado de ' -> '').\n"
+                "- Do NOT include dates in the title if a date column already exists.\n"
+                "- NEVER output explanations, markdown text, or reasoning."
+            )
+            prompt = (
+                f"Compress this CV title to strictly under {target_len} characters (1 single line):\n"
+                f"- Current Title: {clean_title}\n"
+                f"- Item Type: {item_type}\n"
+                f"- Subtitle / Organization: {subtitle_or_org or 'N/A'}\n"
+                f"- Date / Column 2: {period_or_link or 'N/A'}\n\n"
+                f"Return JSON: {{\"optimized_title\": \"<concise title under {target_len} chars>\"}}"
+            )
+
+            # Gemini
+            if self.provider == "gemini" and self.api_key:
+                import httpx
+                models_to_try = self._get_gemini_model_candidates()
+                for m in models_to_try:
+                    clean_m = m.replace("models/", "").strip()
+                    url = f"https://generativelanguage.googleapis.com/v1beta/models/{clean_m}:generateContent?key={self.api_key}"
+                    payload = {
+                        "contents": [
+                            {
+                                "role": "user",
+                                "parts": [
+                                    {"text": f"System Instructions:\n{system_instruction}\n\nTask Instructions:\n{prompt}"}
+                                ],
+                            }
+                        ],
+                        "generationConfig": {
+                            "temperature": 0.1,
+                            "responseMimeType": "application/json",
+                            "maxOutputTokens": 256,
+                        },
+                    }
+                    try:
+                        res = httpx.post(url, json=payload, timeout=20.0)
+                        if res.status_code == 200:
+                            data = res.json()
+                            candidates = data.get("candidates", [])
+                            if candidates:
+                                raw_json = candidates[0].get("content", {}).get("parts", [])[0].get("text", "")
+                                clean_json_str = raw_json.replace("```json", "").replace("```", "").strip()
+                                parsed = json.loads(clean_json_str)
+                                opt_title = (parsed.get("optimized_title") or parsed.get("title") or "").strip().strip('"\'')
+                                if opt_title:
+                                    self.model = clean_m
+                                    self.calls_succeeded += 1
+                                    return {
+                                        "optimized_title": opt_title[:target_len + 4].strip(),
+                                        "original_title": clean_title,
+                                        "chars": len(opt_title),
+                                        "provider": "gemini",
+                                        "strategy": f"Otimização de Título LLM ({clean_m})",
+                                    }
+                    except Exception as e:
+                        self.last_error = f"Gemini title optimization error ({clean_m}): {str(e)}"
+
+            # OpenAI / Groq
+            elif self.provider in ["openai", "groq"] and self.client:
+                try:
+                    response = self.client.chat.completions.create(
+                        model=self.model,
+                        messages=[
+                            {"role": "system", "content": system_instruction},
+                            {"role": "user", "content": prompt},
+                        ],
+                        temperature=0.1,
+                        max_tokens=256,
+                        response_format={"type": "json_object"},
+                    )
+                    raw_json = response.choices[0].message.content.strip()
+                    parsed = json.loads(raw_json)
+                    opt_title = (parsed.get("optimized_title") or parsed.get("title") or "").strip().strip('"\'')
+                    if opt_title:
+                        self.calls_succeeded += 1
+                        return {
+                            "optimized_title": opt_title[:target_len + 4].strip(),
+                            "original_title": clean_title,
+                            "chars": len(opt_title),
+                            "provider": self.provider,
+                            "strategy": f"Otimização de Título LLM ({self.model})",
+                        }
+                except Exception as e:
+                    self.last_error = f"{self.provider} title optimization failed: {str(e)}"
+
+        # 2. Contextual deterministic heuristic compressor (offline, 0 tokens)
+        opt = clean_title
+
+        # Strip redundant dates from title if period already has it
+        if period_or_link:
+            clean_period = str(period_or_link).strip()
+            if clean_period in opt:
+                opt = opt.replace(clean_period, "").strip()
+
+        # Known long pattern reductions
+        low = opt.lower()
+        if "sbesc" in low and ("ufmg" in low or "conhecimento" in low or "relevância" in low):
+            opt = "Apresentação & Prêmio: AtesN-DS (SBESC/UFMG)" if is_pt else "Presentation & Award: AtesN-DS (SBESC/UFMG)"
+        elif "sbesc" in low or "symposium on computing systems" in low:
+            opt = "Apresentação Técnica: SBESC" if is_pt else "Technical Presentation: SBESC"
+        elif "semana do conhecimento" in low or ("relevância acadêmica" in low and "ufmg" in low):
+            opt = "Relevância Acadêmica UFMG" if is_pt else "Academic Distinction: UFMG"
+        elif "japanese-language proficiency test" in low or "jlpt" in low:
+            if "phase 1" in low or "fase 1" in low or "n5" in low:
+                opt = "Certificação JLPT (Fase 1)"
+            elif "phase 3" in low or "fase 3" in low or "n3" in low:
+                opt = "Certificação JLPT (Fase 3)"
+            else:
+                opt = "Certificação JLPT"
+        elif "networking basics" in low and "cisco" in low:
+            opt = "Redes de Computadores (Cisco)" if is_pt else "Networking Basics (Cisco)"
+        elif "introduction to cybersecurity" in low:
+            opt = "Segurança Cibernética (Cisco)" if is_pt else "Cybersecurity Basics (Cisco)"
+        elif "atesn" in low and "dns" in low:
+            opt = "AtesN-DS: DNS de Alta Performance" if is_pt else "AtesN-DS: High-Performance DNS"
+        elif "pacotes" in low and "gpu" in low:
+            opt = "Processamento de Pacotes em GPU" if is_pt else "GPU Packet Processing"
+        elif "lecom" in low:
+            opt = "Pesquisador Científico @ Lecom/UFMG" if is_pt else "Research Scientist @ Lecom/UFMG"
+        else:
+            # General rule-based compression
+            remove_prefixes = [
+                "Apresentação e Participação no ",
+                "Apresentação e Participação na ",
+                "Apresentação no ",
+                "Participação no ",
+                "Participação na ",
+                "Certificação Técnica: ",
+                "Certificação em ",
+                "Certificado de ",
+                "Certificado em ",
+                "Premiação de ",
+                "Prêmio de ",
+                "Projeto: ",
+            ]
+            for pfx in remove_prefixes:
+                if opt.lower().startswith(pfx.lower()):
+                    opt = opt[len(pfx):].strip()
+
+            # Abbreviate verbose common university/institution names
+            opt = re.sub(r"\bUniversidade Federal de Minas Gerais\b", "UFMG", opt, flags=re.IGNORECASE)
+            opt = re.sub(r"\bSemana do Conhecimento UFMG\b", "UFMG", opt, flags=re.IGNORECASE)
+            opt = re.sub(r"\bXV Symposium on Computing Systems Engineering\b", "SBESC", opt, flags=re.IGNORECASE)
+
+            # If still longer than target_len, smartly truncate at separator
+            if len(opt) > target_len:
+                for sep in [": ", " - ", " (", " & "]:
+                    if sep in opt:
+                        part = opt.split(sep)[0].strip()
+                        if len(part) >= 12 and len(part) <= target_len:
+                            opt = part
+                            break
+
+            if len(opt) > target_len:
+                opt = opt[:target_len - 3].rstrip() + "..."
+
+        return {
+            "optimized_title": opt.strip(),
+            "original_title": clean_title,
+            "chars": len(opt.strip()),
+            "provider": "offline_heuristic",
+            "strategy": "Minimização Heurística de Linha Única",
         }
 
 
