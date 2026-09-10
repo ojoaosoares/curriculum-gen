@@ -111,21 +111,33 @@ NEED_SUDO_INSTALL=false
 
 # Verificação de Python 3.10+
 if ! command -v python3 &>/dev/null; then
-    MISSING_SYS_PKGS+=("python3")
+    log_warn "Python 3 não foi encontrado no sistema."
+    if [[ "$PKG_MANAGER" == "apt" ]]; then
+        MISSING_SYS_PKGS+=("python3" "python3-venv" "python3-pip")
+    elif [[ "$PKG_MANAGER" == "pacman" ]]; then
+        MISSING_SYS_PKGS+=("python" "python-pip")
+    elif [[ "$PKG_MANAGER" == "dnf" ]]; then
+        MISSING_SYS_PKGS+=("python3" "python3-pip")
+    elif [[ "$PKG_MANAGER" == "brew" ]]; then
+        MISSING_SYS_PKGS+=("python@3.12")
+    fi
     NEED_SUDO_INSTALL=true
 else
-    PY_VER=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
-    PY_MAJOR=$(python3 -c 'import sys; print(sys.version_info.major)')
-    PY_MINOR=$(python3 -c 'import sys; print(sys.version_info.minor)')
-    if [[ "$PY_MAJOR" -lt 3 ]] || [[ "$PY_MAJOR" -eq 3 && "$PY_MINOR" -lt 10 ]]; then
-        log_error "Python $PY_VER detectado. O Curriculum-Gen requer Python >= 3.10."
-        MISSING_SYS_PKGS+=("python3 (>=3.10)")
-        NEED_SUDO_INSTALL=true
-    else
+    # Testa se a versão do Python é >= 3.10
+    if python3 -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" 2>/dev/null; then
+        PY_VER=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")' 2>/dev/null)
         log_success "Python $PY_VER encontrado."
+    else
+        PY_VER=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")' 2>/dev/null || echo "desconhecido")
+        log_error "Python $PY_VER detectado, mas o Curriculum-Gen requer Python >= 3.10."
+        log_info "Por favor, atualize ou instale o Python 3.10+ antes de executar o projeto."
+        log_info "Sugestão:"
+        log_info "  - Ubuntu (via deadsnakes): sudo add-apt-repository ppa:deadsnakes/ppa && sudo apt update && sudo apt install -y python3.11 python3.11-venv"
+        log_info "  - Ou usando pyenv: pyenv install 3.12 && pyenv local 3.12"
+        exit 1
     fi
 
-    # Testa suporte a venv
+    # Testa suporte ao módulo venv
     if ! python3 -c "import venv" &>/dev/null; then
         log_warn "O módulo 'venv' do Python não está disponível."
         if [[ "$PKG_MANAGER" == "apt" ]]; then
@@ -149,8 +161,8 @@ if ! command -v node &>/dev/null || ! command -v npm &>/dev/null; then
     fi
     NEED_SUDO_INSTALL=true
 else
-    NODE_VER=$(node -v)
-    NPM_VER=$(npm -v)
+    NODE_VER=$(node -v 2>/dev/null || echo "desconhecido")
+    NPM_VER=$(npm -v 2>/dev/null || echo "desconhecido")
     log_success "Node.js $NODE_VER e npm $NPM_VER encontrados."
 fi
 
@@ -199,7 +211,7 @@ if [[ "$NEED_SUDO_INSTALL" == true && "$SKIP_SYS_DEPS" == false ]]; then
         case "$PKG_MANAGER" in
             apt)
                 log_info "Atualizando repositórios e instalando pacotes via apt..."
-                sudo apt-get update -qq
+                sudo apt-get update
                 APT_PACKAGES=()
                 [[ "$HAS_PDFLATEX" == false ]] && APT_PACKAGES+=("texlive-latex-base" "texlive-latex-extra" "texlive-fonts-recommended")
                 [[ "$HAS_FONTAWESOME" == false ]] && APT_PACKAGES+=("texlive-fonts-extra")
@@ -207,7 +219,10 @@ if [[ "$NEED_SUDO_INSTALL" == true && "$SKIP_SYS_DEPS" == false ]]; then
                     APT_PACKAGES+=("$pkg")
                 done
                 if [[ ${#APT_PACKAGES[@]} -gt 0 ]]; then
-                    sudo apt-get install -y "${APT_PACKAGES[@]}"
+                    if ! sudo apt-get install -y "${APT_PACKAGES[@]}"; then
+                        log_warn "Falha na instalação automática de alguns pacotes via apt."
+                        log_info "Comando manual alternativo: sudo apt-get install -y ${APT_PACKAGES[*]}"
+                    fi
                 fi
                 ;;
             pacman)
@@ -219,7 +234,7 @@ if [[ "$NEED_SUDO_INSTALL" == true && "$SKIP_SYS_DEPS" == false ]]; then
                     PACMAN_PKGS+=("$pkg")
                 done
                 if [[ ${#PACMAN_PKGS[@]} -gt 0 ]]; then
-                    sudo pacman -S --noconfirm --needed "${PACMAN_PKGS[@]}"
+                    sudo pacman -S --noconfirm --needed "${PACMAN_PKGS[@]}" || true
                 fi
                 ;;
             dnf)
@@ -231,14 +246,14 @@ if [[ "$NEED_SUDO_INSTALL" == true && "$SKIP_SYS_DEPS" == false ]]; then
                     DNF_PKGS+=("$pkg")
                 done
                 if [[ ${#DNF_PKGS[@]} -gt 0 ]]; then
-                    sudo dnf install -y "${DNF_PKGS[@]}"
+                    sudo dnf install -y "${DNF_PKGS[@]}" || true
                 fi
                 ;;
             brew)
                 log_info "Instalando pacotes via Homebrew..."
-                [[ "$HAS_PDFLATEX" == false ]] && brew install --cask mactex-no-gui
+                [[ "$HAS_PDFLATEX" == false ]] && brew install --cask mactex-no-gui || true
                 for pkg in "${MISSING_SYS_PKGS[@]}"; do
-                    brew install "$pkg"
+                    brew install "$pkg" || true
                 done
                 ;;
             *)
