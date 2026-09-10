@@ -130,20 +130,29 @@ A aplicação foi projetada sob princípios rigorosos de **engenharia de sistema
 - `pdflatex` (TeX Live no Linux/macOS ou MiKTeX no Windows)
 - Pacote de fontes `fontawesome5`
 
-### Instalação
+### Instalação Automatizada (Recomendado)
+
+Basta clonar e executar o instalador interativo, que detecta e configura o ambiente Python, dependências do sistema TeX Live/LaTeX, Node.js e frontend:
 
 ```bash
 git clone https://github.com/ojoaosoares/curriculum-gen.git
 cd curriculum-gen
 
-# Criar ambiente virtual
+chmod +x install.sh
+./install.sh
+```
+
+### Instalação Manual
+
+```bash
+# 1. Criar ambiente virtual
 python3 -m venv .venv
 source .venv/bin/activate
 
-# Instalar dependências e CLI
-pip install -e .
+# 2. Instalar dependências e CLI
+pip install -e ".[dev]"
 
-# Instalar dependências do Frontend (React + Vite)
+# 3. Instalar dependências do Frontend (React + Vite)
 cd frontend && npm install && cd ..
 ```
 
