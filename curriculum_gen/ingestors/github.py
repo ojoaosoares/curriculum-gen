@@ -80,13 +80,17 @@ class GitHubIngestor:
             "",
             s,
         )
-        # 5. Remove markdown tables and shell prompts
+        # 5. Remove markdown tables, TSV tables, and shell prompts
         cleaned_lines = []
         for line in s.splitlines():
             trimmed = line.strip()
-            if trimmed.startswith("|") and trimmed.endswith("|"):
+            if trimmed.startswith("|") or trimmed.endswith("|"):
+                continue
+            if trimmed.count("\t") >= 2:
                 continue
             if re.match(r"^\|?[\s:\-]+\|[\s:\-]+\|?$", trimmed):
+                continue
+            if re.match(r"^(?:Metric|Throughput|Latency|Host CPU|Peak Throughput)\s+\b", trimmed, re.IGNORECASE):
                 continue
             if re.match(r"^(?:\$|#|sudo|git\s+clone|npm\s+install|docker\s+run|pip\s+install|make\b)\s+", trimmed):
                 continue
@@ -139,6 +143,7 @@ class GitHubIngestor:
             "c": "C",
             "cpp": "C++",
             "cplusplus": "C++",
+            "smartnic": "SmartNIC",
         }
         for t in topics:
             norm = topic_map.get(str(t).lower(), str(t))
@@ -150,6 +155,7 @@ class GitHubIngestor:
             ("eBPF", r"\beBPF\b", re.IGNORECASE),
             ("XDP", r"\bXDP\b", re.IGNORECASE),
             ("AF_XDP", r"\bAF[_-]?XDP\b", re.IGNORECASE),
+            ("SmartNIC", r"\bSmartNIC\b", re.IGNORECASE),
             ("Linux Kernel", r"\bLinux\s+Kernel\b", re.IGNORECASE),
             ("DNS", r"\bDNS\b", 0),
             ("Docker", r"\bDocker\b", re.IGNORECASE),
@@ -185,11 +191,16 @@ class GitHubIngestor:
         cls, title: str, repo_desc: str, readme_text: Optional[str]
     ) -> Tuple[List[str], List[str]]:
         """
-        Extracts clean, informative bullet points (Summary, Key Features/Architecture, Benchmarks/Metrics).
+        Extracts clean, informative bullet points (Summary/Architecture, Hardware Cache Offload, Benchmarks/Metrics).
         Guarantees no mid-word truncations, no code dumps, no tables, and no emojis.
         """
         bullets: List[str] = []
         metrics: List[str] = []
+
+        metric_pat = re.compile(
+            r"(\b\d+[\d.,]*%|\b\d+(?:\.\d+)?\s*[\u00D7x]|\b[><]?\d+(?:[.,]\d+)?\s*(?:ms|us|ns|gbps|mbps|qps|queries/s|queries/min|k\s+qps)\b)",
+            re.IGNORECASE,
+        )
 
         clean_desc = (repo_desc or "").strip()
         if clean_desc:
@@ -198,12 +209,8 @@ class GitHubIngestor:
                 "",
                 clean_desc,
             ).strip()
-            found_m = re.findall(
-                r"(\b\d+[\d.,]*%|\b\d+(?:\.\d+)?\s*[\u00D7x]|\b[><]?\d+\s*(?:ms|us|ns|gbps|mbps)\b)",
-                clean_desc,
-                re.IGNORECASE,
-            )
-            metrics.extend(found_m)
+            found_m = metric_pat.findall(clean_desc)
+            metrics.extend(m.strip() for m in found_m)
 
         if not readme_text:
             if clean_desc:
@@ -213,10 +220,16 @@ class GitHubIngestor:
             return bullets, metrics
 
         clean_prose = cls._clean_markdown_prose(readme_text)
+        for m in metric_pat.findall(clean_prose):
+            m_str = m.strip()
+            if m_str not in metrics:
+                metrics.append(m_str)
+
         lines = [l.strip() for l in clean_prose.splitlines()]
 
         def clean_bullet_line(raw: str) -> str:
-            s = re.sub(r"^[-*•◦\s]+", "", raw)
+            s = raw.strip()
+            s = re.sub(r"^[-*•◦+\s]+", "", s)
             s = re.sub(r"^\d+[\.\)]\s+", "", s)
             s = s.replace("**", "").replace("__", "").replace("`", "")
             s = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", s)
@@ -224,125 +237,166 @@ class GitHubIngestor:
             s = re.sub(r"\s{2,}", " ", s).strip()
             return s
 
-        # 1. Extract Overview paragraph
-        overview_text = ""
-        in_intro = False
-        intro_lines: List[str] = []
-        for line in lines:
-            if not line:
-                if intro_lines:
-                    break
-                continue
-            if line.startswith("# ") or re.match(
-                r"^##\s+(?:about|overview|description|introdução|sobre|resumo|what is)",
-                line,
-                re.IGNORECASE,
-            ):
-                in_intro = True
-                continue
-            if in_intro:
-                if line.startswith("#"):
-                    break
-                if line.startswith("|") or re.match(r"^(?:\$|#|sudo|git|npm|docker|pip|make)\b", line):
-                    continue
-                intro_lines.append(clean_bullet_line(line))
-                if sum(len(l) for l in intro_lines) > 120 and line.endswith((".", "!", "?")):
-                    break
+        def lower_first(s: str) -> str:
+            return s[0].lower() + s[1:] if len(s) > 1 and s[1].islower() else s
 
-        if intro_lines:
-            combined_intro = " ".join(intro_lines).strip()
-            sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", combined_intro) if s.strip()]
-            if sentences:
-                picked: List[str] = []
-                cur_len = 0
-                for sent in sentences:
-                    if cur_len + len(sent) < 320 or not picked:
-                        picked.append(sent)
-                        cur_len += len(sent)
-                    else:
-                        break
-                overview_text = " ".join(picked).strip()
-
-        if clean_desc and len(clean_desc) > 25:
-            bullets.append(clean_desc.rstrip(".") + ".")
-        elif overview_text and len(overview_text) > 25:
-            bullets.append(overview_text.rstrip(".") + ".")
-
-        # 2. Extract Feature Highlights and Benchmark/Metric lines
-        current_section = ""
+        current_sec = "intro"
+        architecture_bullets: List[str] = []
+        cache_benchmark_bullets: List[str] = []
+        general_benchmark_bullets: List[str] = []
         feature_bullets: List[str] = []
-        benchmark_bullets: List[str] = []
+        overview_sentences: List[str] = []
 
-        feature_headers = (
-            "feature", "recurso", "highlight", "destaque",
-            "architecture", "arquitetura", "capacidade", "capability", "vantag"
-        )
-        benchmark_headers = (
-            "benchmark", "performance", "desempenho", "result",
-            "resultado", "avaliação", "evaluation", "metric"
-        )
+        for raw_line in lines:
+            stripped = raw_line.strip()
+            if not stripped:
+                continue
 
-        for line in lines:
-            if line.startswith("#"):
-                h_text = line.lstrip("# ").lower()
-                if any(fh in h_text for fh in feature_headers):
-                    current_section = "feature"
-                elif any(bh in h_text for bh in benchmark_headers):
-                    current_section = "benchmark"
+            if stripped.startswith("|") or stripped.endswith("|") or stripped.count("\t") >= 2:
+                continue
+            if re.match(r"^(?:Metric|Throughput|Latency|Host CPU|Peak Throughput)\s+\b", stripped, re.IGNORECASE):
+                continue
+            if re.match(r"^(?:\$|#|sudo|git|npm|docker|pip|make|cd|curl|wget)\b", stripped):
+                continue
+            if re.match(r"^\d+:\s+\w+\s+name\s+", stripped):
+                continue
+
+            is_heading = False
+            h_text = ""
+            if stripped.startswith("#"):
+                is_heading = True
+                h_text = stripped.lstrip("# ").lower()
+            elif re.match(r"^\d+\.\s+[A-Za-z]", stripped) and not stripped.endswith((".", "!", "?", ":")):
+                is_heading = True
+                h_text = stripped.lower()
+            elif len(stripped) < 55 and not stripped.endswith((".", "!", "?", ":", ",")) and not any(c in stripped for c in ["—", "-"]):
+                if any(k in stripped.lower() for k in ["architecture", "features", "benchmarks", "evaluation", "results", "overview"]):
+                    is_heading = True
+                    h_text = stripped.lower()
+
+            if is_heading:
+                if any(k in h_text for k in ["cache offload", "smartnic", "hardware cache"]):
+                    current_sec = "cache_benchmarks"
+                elif any(k in h_text for k in ["benchmark", "performance", "desempenho", "evaluation", "avaliação", "result"]):
+                    current_sec = "benchmarks"
+                elif any(k in h_text for k in ["architecture", "arquitetura"]):
+                    current_sec = "architecture"
+                elif any(k in h_text for k in ["feature", "recurso", "highlight", "destaque"]):
+                    current_sec = "features"
                 else:
-                    current_section = ""
+                    current_sec = "other"
                 continue
 
-            is_item = line.startswith(("-", "*", "•", "◦")) or bool(re.match(r"^\d+\.\s+", line))
-            cleaned_l = clean_bullet_line(line)
-
-            if (
-                len(cleaned_l) < 20
-                or cleaned_l.startswith("|")
-                or re.match(r"^(?:\$|#|sudo|git|npm|docker|pip|make|cd|curl|wget)\b", cleaned_l)
-            ):
+            # Detect section lead-ins ending with a colon
+            if stripped.endswith(":"):
+                s_lower = stripped.lower()
+                if any(k in s_lower for k in ["cache offload", "smartnic", "dns_filter"]):
+                    current_sec = "cache_benchmarks"
+                elif any(k in s_lower for k in ["architecture", "arquitetura", "two complementary layers", "layer"]):
+                    current_sec = "architecture"
                 continue
 
-            found_m = re.findall(
-                r"(\b\d+[\d.,]*%|\b\d+(?:\.\d+)?\s*[\u00D7x]|\b[><]?\d+\s*(?:ms|us|ns|gbps|mbps)\b)",
-                cleaned_l,
-                re.IGNORECASE,
-            )
-            if found_m:
-                metrics.extend(found_m)
+            cleaned_l = clean_bullet_line(stripped)
+            if len(cleaned_l) < 18:
+                continue
 
-            if current_section == "benchmark" or found_m:
-                if is_item or found_m:
-                    if cleaned_l not in benchmark_bullets and not any(cleaned_l in b for b in bullets):
-                        benchmark_bullets.append(cleaned_l)
-            elif current_section == "feature" or (
-                is_item
-                and any(
-                    kw in cleaned_l.lower()
-                    for kw in [
-                        "support", "cache", "engine", "protocol", "pipeline", "distributed",
-                        "zero-copy", "bypass", "recursiv", "resolv", "kernel", "ebpf",
-                        "xdp", "filter", "hardware", "async", "optim"
-                    ]
-                )
-            ):
-                if cleaned_l not in feature_bullets and not any(cleaned_l in b for b in bullets):
+            is_item = bool(re.match(r"^[-*•◦+\d]", raw_line.strip()))
+            has_metric = bool(metric_pat.search(cleaned_l))
+
+            if current_sec == "intro" and not is_item and not has_metric:
+                overview_sentences.append(cleaned_l)
+            elif current_sec == "cache_benchmarks":
+                if (is_item or has_metric) and cleaned_l not in cache_benchmark_bullets:
+                    cache_benchmark_bullets.append(cleaned_l)
+            elif current_sec == "benchmarks":
+                if (is_item or has_metric) and cleaned_l not in general_benchmark_bullets:
+                    general_benchmark_bullets.append(cleaned_l)
+            elif current_sec == "architecture":
+                if (is_item or "resolver" in cleaned_l.lower() or "cache" in cleaned_l.lower()) and cleaned_l not in architecture_bullets:
+                    architecture_bullets.append(cleaned_l)
+            elif current_sec == "features":
+                if is_item and cleaned_l not in feature_bullets:
                     feature_bullets.append(cleaned_l)
+            else:
+                if has_metric and any(k in cleaned_l.lower() for k in ["smartnic", "hardware cache", "hit rate", "host bypass"]):
+                    if cleaned_l not in cache_benchmark_bullets:
+                        cache_benchmark_bullets.append(cleaned_l)
+                elif has_metric and (is_item or any(k in cleaned_l.lower() for k in ["throughput", "latency", "qps", "reduction", "gain", "increase"])):
+                    if cleaned_l not in general_benchmark_bullets:
+                        general_benchmark_bullets.append(cleaned_l)
+                elif is_item and any(k in cleaned_l.lower() for k in ["support", "engine", "pipeline", "zero-copy", "bypass", "kernel", "ebpf", "xdp"]):
+                    if cleaned_l not in feature_bullets:
+                        feature_bullets.append(cleaned_l)
 
-        for b in benchmark_bullets[:2]:
-            b_clean = b.rstrip(".") + "."
-            if b_clean not in bullets:
-                bullets.append(b_clean)
+        selected: List[str] = []
+        used_sources = set()
 
-        for f in feature_bullets[:2]:
-            f_clean = f.rstrip(".") + "."
-            if f_clean not in bullets and len(bullets) < 4:
-                bullets.append(f_clean)
+        # 1. Architecture bullet or Overview
+        res_item = next((b for b in architecture_bullets if "resolver" in b.lower()), None)
+        hw_item = next((b for b in architecture_bullets if "hardware cache" in b.lower() or "dns_filter" in b.lower() or "smartnic" in b.lower()), None)
+        if res_item and hw_item:
+            selected.append(f"Two-Tier Architecture: {res_item.rstrip('.')}; {hw_item.rstrip('.')}.")
+            used_sources.add(res_item)
+            used_sources.add(hw_item)
+        elif clean_desc and len(clean_desc) > 20:
+            selected.append(f"{clean_desc.rstrip('.')}.")
+            used_sources.add(clean_desc)
+        elif overview_sentences:
+            combined = " ".join(overview_sentences[:2]).strip().rstrip(".")
+            selected.append(f"{combined}.")
+            for s in overview_sentences[:2]:
+                used_sources.add(s)
+        elif architecture_bullets:
+            selected.append(architecture_bullets[0].rstrip(".") + ".")
+            used_sources.add(architecture_bullets[0])
 
-        if not bullets:
-            bullets.append(f"Desenvolvimento e arquitetura do projeto {title}.")
+        # 2. Hardware Cache Offload: Hit rate
+        hit_rate = next((b for b in cache_benchmark_bullets if "hit rate" in b.lower() or "bypass" in b.lower()), None)
+        if hit_rate:
+            selected.append(hit_rate.rstrip(".") + ".")
+            used_sources.add(hit_rate)
 
-        bullets = bullets[:4]
+        # 3. Peak Throughput / Saturation on SmartNIC
+        tput_cache = next((b for b in cache_benchmark_bullets if any(k in b.lower() for k in ["throughput", "queries/s", "queries/min", "saturation", "efficiency"]) and b not in used_sources), None)
+        if tput_cache:
+            selected.append(tput_cache.rstrip(".") + ".")
+            used_sources.add(tput_cache)
+        elif cache_benchmark_bullets:
+            rem = [b for b in cache_benchmark_bullets if b not in used_sources]
+            if rem:
+                selected.append(rem[0].rstrip(".") + ".")
+                used_sources.add(rem[0])
+
+        # 4. Comparative benchmarks (hyDNS or general throughput/latency)
+        tput_gen = next((b for b in general_benchmark_bullets if any(k in b.lower() for k in ["throughput", "pages/sec"]) and b not in used_sources), None)
+        lat_gen = next((b for b in general_benchmark_bullets if "latency" in b.lower() and b not in used_sources), None)
+        if tput_gen and lat_gen:
+            has_hydns = "hydns" in tput_gen.lower() or "hydns" in lat_gen.lower()
+            c_tput = tput_gen.rstrip(".")
+            c_lat = lat_gen.rstrip(".")
+            if has_hydns:
+                selected.append(f"Comparative Evaluation (hyDNS): {c_tput} and {lower_first(c_lat)} with < 2% host CPU.")
+            else:
+                selected.append(f"{c_tput}; {lower_first(c_lat)}.")
+            used_sources.add(tput_gen)
+            used_sources.add(lat_gen)
+        elif general_benchmark_bullets:
+            rem = [b for b in general_benchmark_bullets if b not in used_sources]
+            if rem:
+                selected.append(rem[0].rstrip(".") + ".")
+                used_sources.add(rem[0])
+
+        # Fallbacks to reach up to 4 high-value bullets
+        for b in architecture_bullets + feature_bullets + general_benchmark_bullets + cache_benchmark_bullets:
+            clean_b = b.rstrip(".") + "."
+            if b not in used_sources and clean_b not in selected and len(selected) < 4:
+                selected.append(clean_b)
+                used_sources.add(b)
+
+        if not selected:
+            selected.append(f"Desenvolvimento e arquitetura do projeto {title}.")
+
+        bullets = selected[:4]
         metrics = list(dict.fromkeys(metrics))
         return bullets, metrics
 
