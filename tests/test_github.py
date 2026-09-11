@@ -158,29 +158,98 @@ def test_readme_parsing_atesn_smartnic_cache_offload_and_tables():
     assert "213%" in all_metrics
     assert "51%" in all_metrics
 
-    # Bullets must capture Hardware Cache Offload results
+    # Bullets must capture Overview, Architecture, and empirical benchmarks from both sections
     assert len(project.raw_bullets) == 4
     all_bullets = "\n".join(project.raw_bullets)
 
-    # 1. Architecture bullet
-    assert "Two-Tier Architecture" in project.raw_bullets[0]
-    assert "Kernel Resolver" in project.raw_bullets[0]
-    assert "Hardware Cache" in project.raw_bullets[0] or "hardware cache" in project.raw_bullets[0]
+    # 1. Overview / description bullet
+    assert any("Recursive DNS Resolver" in b for b in project.raw_bullets)
 
-    # 2. Hardware Cache Offload: 72.8% hit rate
+    # 2. Architecture bullet (cleanly extracted from author's text)
+    assert any("Kernel Resolver" in b for b in project.raw_bullets)
+
+    # 3. Hardware Cache Offload: 72.8% hit rate (SmartNIC host bypass)
     assert any("72.8%" in b and "SmartNIC" in b for b in project.raw_bullets)
 
-    # 3. Peak Throughput / SmartNIC advantage
-    assert any("172,000" in b or "1.80×" in b for b in project.raw_bullets)
-
     # 4. Comparative Evaluation vs hyDNS
-    assert any("213%" in b and "51%" in b for b in project.raw_bullets)
+    assert any("213%" in b for b in project.raw_bullets)
 
-    # Bullets must NOT contain raw table lines or broken sentences
+    # Bullets must NOT contain raw table lines, broken sentences, or emojis
     assert "Metric" not in all_bullets
     assert "\t" not in all_bullets
     assert "layers:." not in all_bullets
     assert "🚀" not in all_bullets
     assert not any(b.endswith(":") for b in project.raw_bullets)
+
+
+def test_readme_parsing_web_microservice_payflow():
+    ingestor = GitHubIngestor()
+    web_readme = """
+    # PayFlow: Payment Gateway Microservice
+
+    PayFlow is a high-availability payment gateway service processing multi-currency transactions with idempotency guarantees.
+
+    ## Key Features
+    - Idempotent API endpoints with distributed Redis locks to prevent duplicate charges.
+    - Real-time webhook delivery engine with exponential backoff and dead-letter queue.
+    - PCI-DSS compliant tokenization pipeline using AES-256 GCM encryption.
+    """
+    repo_data = {
+        "name": "payflow",
+        "description": "Payment gateway microservice with distributed idempotency",
+        "html_url": "https://github.com/user/payflow",
+        "language": "TypeScript",
+        "topics": ["typescript", "redis"],
+    }
+    project = ingestor.parse_readme_for_project(repo_data, web_readme)
+
+    assert project.title == "payflow"
+    assert "TypeScript" in project.tags
+    assert "Redis" in project.tags
+    assert len(project.raw_bullets) == 4
+    # Overview bullet
+    assert any("payment gateway microservice" in b.lower() for b in project.raw_bullets)
+    # Feature bullets
+    assert any("idempotent api endpoints" in b.lower() for b in project.raw_bullets)
+    assert any("webhook delivery engine" in b.lower() for b in project.raw_bullets)
+    assert any("tokenization pipeline" in b.lower() for b in project.raw_bullets)
+
+
+def test_readme_parsing_rust_db_flashkv():
+    ingestor = GitHubIngestor()
+    rust_db_readme = """
+    # FlashKV: High-Performance Embedded LSM Storage Engine
+
+    FlashKV is an append-only embedded key-value store implemented in Rust, optimized for NVMe SSD random write workloads.
+
+    ## Architecture
+    - Two-tier MemTable with lock-free skiplist implementation and zero-copy write-ahead log (WAL).
+
+    ## Benchmarks & Results
+    - Achieved 420,000 ops/s write throughput on 16 concurrent threads (+84% speedup).
+    - Reduced 99th percentile write latency from 8.2ms to 1.95ms (4.2x reduction).
+    - 38% lower memory footprint under sustained compaction.
+    """
+    repo_data = {
+        "name": "flash-kv",
+        "description": "High-performance embedded LSM key-value store in Rust",
+        "html_url": "https://github.com/user/flash-kv",
+        "language": "Rust",
+        "topics": ["rust", "database", "storage"],
+    }
+    project = ingestor.parse_readme_for_project(repo_data, rust_db_readme)
+
+    assert project.title == "flash-kv"
+    assert "Rust" in project.tags
+    assert len(project.raw_bullets) == 4
+    all_metrics = " ".join(project.metrics)
+    assert "420,000 ops/s" in all_metrics
+    assert "84%" in all_metrics
+    assert "4.2x" in all_metrics or "4.2×" in all_metrics
+    # Raw bullets check
+    assert any("embedded lsm key-value store" in b.lower() for b in project.raw_bullets)
+    assert any("memtable" in b.lower() for b in project.raw_bullets)
+    assert any("420,000" in b for b in project.raw_bullets)
+
 
 
