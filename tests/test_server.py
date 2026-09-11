@@ -528,3 +528,56 @@ def test_suggest_fusion_compact_title():
     assert len(fused["title"]) <= 45  # Single line requirement (<45-48 chars)
     assert "AtesN-DS" in fused["title"]
     assert "SBESC" in fused["title"] or "UFMG" in fused["title"]
+
+
+def test_extract_final_description_edge_cases():
+    from curriculum_gen.llm_optimizer import _extract_final_description
+
+    # 1. Empty JSON values must return "" so caller triggers fallback
+    assert _extract_final_description('{"description": " "}') == ""
+    assert _extract_final_description('{"description": ""}') == ""
+    assert _extract_final_description('description: " "') == ""
+    assert _extract_final_description('description: ""') == ""
+    assert _extract_final_description('{}') == ""
+
+    # 2. LaTeX backslashes like \textbf and \% must be preserved without error or mojibake
+    latex_json = r'{"description": "Otimização com \textbf{51\% de redução} na latência."}'
+    extracted = _extract_final_description(latex_json)
+    assert r"\textbf{51\% de redução}" in extracted or r"\textbf{51\%" in extracted
+
+    # 3. Raw description: "..." prefix must be unwrapped
+    raw_pref = 'description: "Apresentação e publicação de artigo no SBESC 2025."'
+    assert _extract_final_description(raw_pref) == "Apresentação e publicação de artigo no SBESC 2025."
+
+    # 4. Markdown codeblock json must be unwrapped
+    cb = '```json\n{"description": "Desenvolvimento do resolvedor DNS AtesN-DS."}\n```'
+    assert _extract_final_description(cb) == "Desenvolvimento do resolvedor DNS AtesN-DS."
+
+
+def test_suggest_description_sanitized_output():
+    from fastapi.testclient import TestClient
+    from curriculum_gen.server.app import app
+
+    client = TestClient(app)
+    # Testing with dirty current description containing bpftool and markdown asterisks
+    res = client.post(
+        "/api/suggest-description",
+        json={
+            "item_type": "project",
+            "title": "AtesN-DS",
+            "subtitle_or_org": "C, eBPF, XDP",
+            "current_description": "243: array name time_map flags 0x0\n**Hardware Cache** (`dns_filter`) — line rate.\nThis approach avo..",
+            "language": "pt",
+            "mode": "improve",
+        },
+    )
+    assert res.status_code == 200
+    data = res.json()
+    text = data.get("text", "")
+    assert text
+    assert "243: array" not in text
+    assert "**" not in text
+    assert "avo.." not in text
+    assert not text.startswith('{"description"')
+    assert not text.startswith('description:')
+

@@ -139,11 +139,22 @@ def safe_parse_json_bullets(text: str) -> List[str]:
     return cleaned_bullets
 
 
+def _repair_json_escapes(s: str) -> str:
+    """
+    Safely escapes backslashes for JSON parsing while preserving valid escape sequences
+    such as \\", \\\\, \\n, and unicode \\uXXXX. Doubles all others (e.g. \\textbf, \\%, \\_, \\approx).
+    """
+    return re.sub(r'\\(?!["\\n]|u[0-9a-fA-F]{4})', r'\\\\', s)
+
+
 def _extract_final_description(raw_text: str) -> str:
     """
     Extracts clean, production-ready description text from LLM responses.
     Handles JSON payloads ({"description": "..."}), codeblock wrapping,
-    and aggressively filters out any leaked prompt headers or thought-process scratchpads.
+    LaTeX backslashes, and aggressively filters out any leaked prompt headers
+    or thought-process scratchpads.
+    Returns empty string if description is empty or whitespace, allowing the caller
+    to trigger rich heuristic fallbacks instead of leaking raw JSON or empty placeholders.
     """
     if not raw_text:
         return ""
@@ -152,36 +163,45 @@ def _extract_final_description(raw_text: str) -> str:
 
     # 1. Strip markdown json codeblocks if present
     if cleaned.startswith("```"):
-        cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
+        cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.IGNORECASE)
         cleaned = re.sub(r"\s*```$", "", cleaned)
         cleaned = cleaned.strip()
 
-    # 2. Try strict JSON parse
-    try:
-        data = json.loads(cleaned)
-        if isinstance(data, dict):
-            for k in ["description", "text", "suggestion", "content", "result", "bullet", "bullets"]:
-                val = data.get(k)
-                if isinstance(val, str) and val.strip():
-                    return val.strip().strip('"\'')
-                elif isinstance(val, list) and val:
-                    return "\n".join(str(x).strip() for x in val if str(x).strip())
-        elif isinstance(data, list) and data:
-            return "\n".join(str(x).strip() for x in data if str(x).strip())
-    except Exception:
-        pass
-
-    # 3. Regex search for "description": "..." in case of minor JSON malformation
-    match = re.search(r'"(?:description|text|suggestion)"\s*:\s*"((?:[^"\\]|\\.)*)"', cleaned, re.DOTALL)
-    if match:
+    # 2. Try JSON parse with unescaped backslash repair
+    repaired_json = _repair_json_escapes(cleaned)
+    data = None
+    for candidate in [repaired_json, cleaned]:
         try:
-            extracted = match.group(1).encode().decode('unicode_escape', errors='ignore')
-            if extracted.strip():
-                return extracted.strip().strip('"\'')
+            data = json.loads(candidate)
+            break
         except Exception:
             pass
 
-    # 4. If raw text leaked prompt lines or scratchpad drafts, prune them
+    if isinstance(data, dict):
+        for k in ["description", "text", "suggestion", "content", "result", "bullet", "bullets"]:
+            if k in data:
+                val = data[k]
+                if isinstance(val, str):
+                    # If string is present, return its stripped version immediately (even if empty, so caller knows it was empty)
+                    return val.strip().strip('"\'')
+                elif isinstance(val, list):
+                    return "\n".join(str(x).strip() for x in val if str(x).strip())
+        return ""
+    elif isinstance(data, list):
+        return "\n".join(str(x).strip() for x in data if str(x).strip())
+
+    # 3. Regex search for "description": "..." in case of minor JSON malformation
+    match = re.search(r'"?(?:description|text|suggestion)"?\s*:\s*"((?:[^"\\]|\\.)*)"', cleaned, re.IGNORECASE | re.DOTALL)
+    if match:
+        extracted = match.group(1).replace(r'\"', '"').replace(r'\\', '\\').strip()
+        return extracted.strip('"\'')
+
+    # 4. Check for leading "description:" or description: ...
+    m_loose = re.match(r'^"?description"?\s*:\s*(.*)$', cleaned, re.IGNORECASE | re.DOTALL)
+    if m_loose:
+        cleaned = m_loose.group(1).strip().strip('"\'`')
+
+    # 5. If raw text leaked prompt lines or scratchpad drafts, prune them
     lines = cleaned.splitlines()
     filtered_lines = []
     stop_indicators = (
@@ -212,8 +232,10 @@ def _extract_final_description(raw_text: str) -> str:
             continue
         filtered_lines.append(line)
 
-    final_text = "\n".join(filtered_lines).strip()
-    return final_text.strip('"\'') if final_text else cleaned.strip('"\'')
+    final_text = "\n".join(filtered_lines).strip().strip('"\'')
+    if final_text in ("{}", '{"description": ""}', '{"description": " "}', ""):
+        return ""
+    return final_text
 
 
 SYSTEM_PROMPT = """You are an elite technical resume coach and ATS optimization specialist.
@@ -442,7 +464,18 @@ INSTRUCTIONS & CRITICAL CONSTRAINTS:
             self.tokens_saved += saved
             self.saved_breakdown["job_distillation"] += saved
 
-        readme_snippet = proj.readme_content[:400] if proj.readme_content else ""
+        readme_snippet = ""
+        if proj.readme_content:
+            from curriculum_gen.ingestors.github import GitHubIngestor
+            bullets_from_readme, _ = GitHubIngestor._parse_readme_highlights(
+                proj.title, "", proj.readme_content
+            )
+            if bullets_from_readme:
+                readme_snippet = "\n".join(f"- {b}" for b in bullets_from_readme)
+        if not readme_snippet and proj.readme_content:
+            from curriculum_gen.ingestors.github import GitHubIngestor
+            clean_prose = GitHubIngestor._clean_markdown_prose(proj.readme_content)
+            readme_snippet = clean_prose[:800].strip()
 
         prompt = f"""Target Role / Context: {job_context.target_role or 'Software Engineer'}
 Target Job Key Requirements (for context/emphasis only):
@@ -453,12 +486,12 @@ Title: {proj.title} ({proj.subtitle or ''})
 Project Tags: {', '.join(proj.tags)}
 Candidate Source Bullets for this Project:
 {json.dumps(proj.raw_bullets, indent=1)}
-Highlights:
+Key Project Architecture & Highlights:
 {readme_snippet}
 
 INSTRUCTIONS & CRITICAL CONSTRAINTS:
 1. Grounding: Rewrite ONLY the candidate's actual project achievements into Google XYZ bullet points.
-2. Zero Hallucination: Do NOT invent technologies or tasks not present in this project's source bullets or highlights.
+2. Zero Hallucination: Do NOT invent technologies, tools, or responsibilities not present in this project's source bullets or highlights. Do NOT transfer technologies from other roles or projects into this project.
 3. Highlighting: Use ONLY LaTeX \\textbf{{...}} for metrics and technologies. NEVER use HTML tags.
 4. Output: Generate up to {job_context.max_bullets_per_project} bullet points strictly in {lang_name}.
 """
@@ -1020,20 +1053,36 @@ INSTRUCTIONS & CRITICAL CONSTRAINTS:
                 polished_lines = []
                 for line in clean_curr.splitlines():
                     l_str = line.strip().lstrip("-*•◦ ").strip()
-                    if l_str:
+                    # Filter out code dump lines, bpftool, terminal, shell prompts
+                    if re.match(r"^\d+:\s+\w+\s+name\s+", l_str) or re.match(r"^(?:\$|#|sudo|git|npm|docker|bpftool)\b", l_str):
+                        continue
+                    if l_str.startswith("|") or l_str.startswith("```"):
+                        continue
+                    # Clean markdown bold/italics/emojis
+                    l_str = l_str.replace("**", "").replace("__", "").replace("`", "")
+                    l_str = re.sub(r"[\U00010000-\U0010ffff\u2600-\u26ff\u2700-\u27bf\u200d\ufe0f]", "", l_str).strip()
+                    # Strip trailing broken dots like "avo.."
+                    l_str = re.sub(r"\.{2,}$", "", l_str).strip()
+                    if len(l_str) > 10:
                         polished_lines.append(f"◦ {l_str[0].upper() + l_str[1:] if len(l_str) > 1 else l_str.upper()}.")
                 heuristic_text = "\n".join(polished_lines)
             elif item_type == "award":
+                clean_award = clean_curr.replace("**", "").replace("`", "")
+                clean_award = re.sub(r"[\U00010000-\U0010ffff\u2600-\u26ff\u2700-\u27bf\u200d\ufe0f]", "", clean_award).strip()
+                clean_award = re.sub(r"\.{2,}$", "", clean_award).strip()
                 heuristic_text = (
-                    f"Distinção técnica conferida a {title}, reconhecendo a excelência de execução em {clean_curr[0].lower() + clean_curr[1:]} e o mérito dos resultados demonstrados."
+                    f"Distinção técnica conferida a {title}, reconhecendo a excelência de execução em {clean_award[0].lower() + clean_award[1:]} e o mérito dos resultados demonstrados."
                     if is_pt
-                    else f"Technical distinction awarded for {title}, recognizing demonstrated excellence in {clean_curr} and verifiable impact on performance standards."
+                    else f"Technical distinction awarded for {title}, recognizing demonstrated excellence in {clean_award} and verifiable impact on performance standards."
                 )
             else:
+                clean_other = clean_curr.replace("**", "").replace("`", "")
+                clean_other = re.sub(r"[\U00010000-\U0010ffff\u2600-\u26ff\u2700-\u27bf\u200d\ufe0f]", "", clean_other).strip()
+                clean_other = re.sub(r"\.{2,}$", "", clean_other).strip()
                 heuristic_text = (
-                    f"◦ {clean_curr[0].upper() + clean_curr[1:]}, aplicando boas práticas de engenharia de software e arquiteturas robustas para maximizar confiabilidade e desempenho."
+                    f"◦ {clean_other[0].upper() + clean_other[1:]}, aplicando boas práticas de engenharia de software e arquiteturas robustas para maximizar confiabilidade e desempenho."
                     if is_pt
-                    else f"◦ {clean_curr[0].upper() + clean_curr[1:]}, applying software engineering best practices and robust architectures for peak reliability."
+                    else f"◦ {clean_other[0].upper() + clean_other[1:]}, applying software engineering best practices and robust architectures for peak reliability."
                 )
 
         # SBESC presentation

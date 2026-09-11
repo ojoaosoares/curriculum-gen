@@ -597,8 +597,11 @@ export default function App() {
     const detected = new Set();
     allProfileSkills.forEach((sk) => {
       const escaped = sk.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const regex = new RegExp(`(^|[^a-zA-Z0-9_#+])${escaped}([^a-zA-Z0-9_#+]|$)`, 'i');
-      if (regex.test(lower)) {
+      const isShort = sk.length <= 2;
+      const flags = isShort ? '' : 'i';
+      const regex = new RegExp(`(^|[^a-zA-Z0-9_#+])${escaped}([^a-zA-Z0-9_#+]|$)`, flags);
+      const textToTest = isShort ? fullText : lower;
+      if (regex.test(textToTest)) {
         detected.add(sk);
       }
     });
@@ -611,8 +614,11 @@ export default function App() {
     ];
     commonTechs.forEach((tech) => {
       const escaped = tech.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const regex = new RegExp(`(^|[^a-zA-Z0-9_#+])${escaped}([^a-zA-Z0-9_#+]|$)`, 'i');
-      if (regex.test(lower)) {
+      const isShort = tech.length <= 2;
+      const flags = isShort ? '' : 'i';
+      const regex = new RegExp(`(^|[^a-zA-Z0-9_#+])${escaped}([^a-zA-Z0-9_#+]|$)`, flags);
+      const textToTest = isShort ? fullText : lower;
+      if (regex.test(textToTest)) {
         detected.add(tech);
       }
     });
@@ -750,20 +756,45 @@ export default function App() {
       if (res.ok) {
         const data = await res.json();
         if (data.suggestion || data.text) {
-          const suggestedText = data.suggestion || data.text;
-          setAiSuggestionState({
-            text: suggestedText,
-            tokens_used: data.tokens_used || 0,
-            tokens_saved: data.tokens_saved || 0,
-            provider: data.provider || 'offline_heuristic',
-            strategy: data.strategy || 'Síntese Contextual',
-            mode: mode,
-            cross_refs: data.cross_refs || [],
-            itemType: itemType,
-            fallback_reason: data.fallback_reason || null,
-          });
-          // Update live telemetry counters immediately
-          fetchTokenStats();
+          let suggestedText = (data.suggestion || data.text || '').trim();
+          // Clean markdown json fences if returned
+          if (suggestedText.startsWith('```')) {
+            suggestedText = suggestedText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+          }
+          // Safely parse raw JSON object if received
+          if (suggestedText.startsWith('{') && suggestedText.endsWith('}')) {
+            try {
+              const parsed = JSON.parse(suggestedText);
+              const val = parsed.description || parsed.text || parsed.suggestion || parsed.content;
+              if (typeof val === 'string') {
+                suggestedText = val.trim();
+              }
+            } catch {
+              const m = suggestedText.match(/"?(?:description|text|suggestion)"?\s*:\s*"((?:[^"\\]|\\.)*)"/i);
+              if (m && m[1]) {
+                suggestedText = m[1].replace(/\\"/g, '"').replace(/\\\\/g, '\\').trim();
+              }
+            }
+          }
+          // Remove residual leading description: "..." or "description": "..."
+          suggestedText = suggestedText.replace(/^"?description"?\s*:\s*["']?/i, '');
+          suggestedText = suggestedText.replace(/["']?\s*$/i, '').trim();
+
+          if (suggestedText) {
+            setAiSuggestionState({
+              text: suggestedText,
+              tokens_used: data.tokens_used || 0,
+              tokens_saved: data.tokens_saved || 0,
+              provider: data.provider || 'offline_heuristic',
+              strategy: data.strategy || 'Síntese Contextual',
+              mode: mode,
+              cross_refs: data.cross_refs || [],
+              itemType: itemType,
+              fallback_reason: data.fallback_reason || null,
+            });
+            // Update live telemetry counters immediately
+            fetchTokenStats();
+          }
         }
       }
     } catch (err) {
